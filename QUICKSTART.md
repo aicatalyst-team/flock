@@ -6,6 +6,19 @@ The fastest path from zero to your first local chat completion. **3 minutes** on
 
 ---
 
+## 🤔 First — how many machines?
+
+| Your situation | Use |
+|---|---|
+| **One person**, or a small team sharing one beefy box | **1 machine** — everything below works |
+| **More throughput** (lots of concurrent users) | 2+ machines — leader + workers |
+| **A model bigger than any single machine** (e.g. Llama 70B on Mac Minis) | 2+ machines + sharding (`flock shard create`) |
+| **Heterogeneous fleet** (e.g. Mac for coder model, NVIDIA for chat) | 2+ machines, models pinned per node |
+
+**One machine is enough for most teams.** Multi-machine is for scale-out, not a requirement. Both setups install the same way — only the *commands you run after installing* differ.
+
+---
+
 ## 🐣 Step 0 — what you need
 
 - **A computer**: Mac (Apple Silicon) or Linux (x86_64 / arm64)
