@@ -546,7 +546,7 @@ func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM model_placements WHERE node_id = ?`, nodeID); err != nil {
 		return err
 	}

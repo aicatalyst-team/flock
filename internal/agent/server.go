@@ -292,7 +292,7 @@ func (s *Server) processLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	n := 100
 	if v := r.URL.Query().Get("lines"); v != "" {
-		fmt.Sscanf(v, "%d", &n)
+		_, _ = fmt.Sscanf(v, "%d", &n)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	for _, line := range s.Supervisor.Logs(id, n) {
