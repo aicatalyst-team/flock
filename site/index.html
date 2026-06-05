@@ -164,11 +164,12 @@
             Engine-agnostic: bring Ollama, vLLM, MLX, or llama.cpp-RPC. Fall back to paid Claude/GPT only when you choose.
           </p>
 
-          <div class="mt-8 bg-slate-950/70 border border-slate-700 rounded-lg p-4 max-w-2xl">
+          <div class="mt-8 bg-slate-950/70 border border-slate-700 rounded-lg p-4 max-w-2xl relative">
             <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">Try it in 60 seconds</div>
-            <pre class="font-mono text-sm text-emerald-300 overflow-x-auto leading-relaxed">$ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
-$ flock doctor      <span class="text-slate-500"># tells you the one command to install an engine, if you don't have one</span>
-$ flock up          <span class="text-slate-500"># starts your private LLM gateway, prints your admin API key</span></pre>
+            <button onclick="copyCode('hero-code', this)" aria-label="Copy" class="absolute top-3 right-3 z-10 px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-100 rounded transition">Copy</button>
+            <pre id="hero-code" class="font-mono text-sm text-emerald-300 overflow-x-auto leading-relaxed whitespace-pre">curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+flock doctor      <span class="text-slate-500"># tells you the one command to install an engine, if you don't have one</span>
+flock up          <span class="text-slate-500"># starts your private LLM gateway, prints your admin API key</span></pre>
           </div>
 
           <div class="mt-8 flex flex-wrap gap-3">
@@ -615,38 +616,40 @@ $ curl http://localhost:8080/v1/chat/completions \
           <p class="mt-4 text-lg text-slate-600 leading-relaxed">Pick your platform — 4 commands each.</p>
         </div>
 
-        <div class="flex gap-2 mb-4">
+        <div class="flex gap-2 mb-0">
           <button onclick="showOS('mac')" id="tab-mac" class="px-4 py-2 rounded-t-lg bg-slate-900 text-white text-sm font-medium">🍎 macOS</button>
           <button onclick="showOS('linux')" id="tab-linux" class="px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium">🐧 Linux</button>
         </div>
 
-        <div id="os-mac" class="bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 font-mono text-sm leading-relaxed">
-<span class="text-slate-500"># 1. install Ollama (use the cask — plain `brew install ollama` is broken on Apple Silicon)</span>
-<span class="text-emerald-400">brew install --cask ollama</span>
-<span class="text-emerald-400">open -a Ollama</span>
+        <div id="os-mac" class="relative">
+          <button onclick="copyCode('mac-code', this)" aria-label="Copy" class="absolute top-3 right-3 z-10 px-3 py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-100 rounded transition">Copy</button>
+          <pre id="mac-code" class="bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 pr-20 font-mono text-sm leading-relaxed overflow-x-auto whitespace-pre"><span class="text-slate-500"># 1. install Flock (one Go binary, ~23 MB)</span>
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 
-<span class="text-slate-500"># 2. install Flock</span>
-<span class="text-emerald-400">curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh</span>
+<span class="text-slate-500"># 2. install an engine — Ollama is the simplest default on Apple Silicon</span>
+<span class="text-slate-500">#    alternatives: pip install mlx-lm  ·  llama.cpp's llama-server  ·  vLLM in Docker</span>
+brew install --cask ollama && open -a Ollama
 
-<span class="text-slate-500"># 3. add install dir to PATH if the installer says so</span>
-<span class="text-emerald-400">export PATH="$HOME/.local/bin:$PATH"</span>
+<span class="text-slate-500"># 3. start Flock with a small model (~1 GB, fast download)</span>
+FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
+        </div>
 
-<span class="text-slate-500"># 4. start Flock with a tiny model (~1 GB, fast)</span>
-<span class="text-emerald-400">FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</span></div>
+        <div id="os-linux" class="hidden relative">
+          <button onclick="copyCode('linux-code', this)" aria-label="Copy" class="absolute top-3 right-3 z-10 px-3 py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-100 rounded transition">Copy</button>
+          <pre id="linux-code" class="bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 pr-20 font-mono text-sm leading-relaxed overflow-x-auto whitespace-pre"><span class="text-slate-500"># 1. install Flock (one Go binary, ~23 MB)</span>
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc && source ~/.bashrc
 
-        <div id="os-linux" class="hidden bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 font-mono text-sm leading-relaxed">
-<span class="text-slate-500"># 1. install Ollama</span>
-<span class="text-emerald-400">curl -fsSL https://ollama.com/install.sh | sh</span>
-<span class="text-emerald-400">sudo systemctl enable --now ollama</span>
+<span class="text-slate-500"># 2. install an engine — Ollama is the simplest default</span>
+<span class="text-slate-500">#    alternatives: vLLM (NVIDIA)  ·  llama.cpp's llama-server  ·  MLX-LM (Apple Silicon only)</span>
+curl -fsSL https://ollama.com/install.sh | sh && sudo systemctl enable --now ollama
 
-<span class="text-slate-500"># 2. install Flock</span>
-<span class="text-emerald-400">curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh</span>
+<span class="text-slate-500"># 3. start Flock with a small model (~1 GB, fast download)</span>
+FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
+        </div>
 
-<span class="text-slate-500"># 3. add install dir to PATH if needed</span>
-<span class="text-emerald-400">echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc &amp;&amp; source ~/.bashrc</span>
-
-<span class="text-slate-500"># 4. start Flock with a tiny model (~1 GB, fast)</span>
-<span class="text-emerald-400">FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</span></div>
+        <p class="mt-3 text-sm text-slate-500">💡 Not sure which engine to install? Run <code class="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">flock doctor</code> after step 1 — it inspects your hardware and tells you the single command to run.</p>
 
         <div class="mt-12 grid md:grid-cols-2 gap-6">
           <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
@@ -1410,6 +1413,36 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
         linux.classList.remove('hidden');
         tabLinux.className = 'px-4 py-2 rounded-t-lg bg-slate-900 text-white text-sm font-medium';
         tabMac.className = 'px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium';
+      }
+    }
+
+    function copyCode(id, btn) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const text = el.innerText;
+      const done = () => {
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('bg-emerald-600');
+        btn.classList.remove('bg-slate-700', 'hover:bg-slate-600');
+        setTimeout(() => {
+          btn.textContent = original;
+          btn.classList.remove('bg-emerald-600');
+          btn.classList.add('bg-slate-700', 'hover:bg-slate-600');
+        }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+          // Fallback for older browsers / non-HTTPS
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta);
+        });
       }
     }
 
