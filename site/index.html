@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+  <meta name="theme-color" content="#0f172a" />
+
+  <!-- Primary SEO -->
+  <title>Flock — Self-Hosted LLM Gateway for Teams · OpenAI + Anthropic compatible · Mac &amp; Linux</title>
+  <meta name="description" content="Flock is an open-source self-hosted LLM gateway. Run Ollama, vLLM, or MLX on your own machines and expose them via OpenAI- and Anthropic-compatible APIs. Cursor, Claude Code, Aider, and any SDK just work. Multi-user keys, quotas, audit log, multi-machine routing, and llama.cpp sharding orchestration in a single Go binary. Apache-2.0." />
+  <meta name="keywords" content="self-hosted LLM, LLM gateway, Ollama, Claude Code local model, OpenAI API self-hosted, Anthropic API self-hosted, LiteLLM alternative, exo alternative, LocalAI, multi-machine inference, llama.cpp RPC, model sharding, llm router, vllm, mlx-lm, Apple Silicon, Mac Mini cluster, on-prem ai" />
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
+  <link rel="canonical" href="https://flockllm.com/" />
+  <meta name="author" content="Flock contributors" />
+
+  <!-- Open Graph / Twitter -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Flock — Self-Hosted LLM Gateway for Teams" />
+  <meta property="og:description" content="One Go binary. OpenAI- and Anthropic-compatible. Runs Ollama, vLLM, MLX. Multi-user keys, quotas, audit log, multi-machine routing, llama.cpp sharding. Apache-2.0." />
+  <meta property="og:url" content="https://flockllm.com/" />
+  <meta property="og:site_name" content="Flock" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Flock — Self-Hosted LLM Gateway" />
+  <meta name="twitter:description" content="Ollama with an org layer + Anthropic-API compatibility. Open source." />
+
+  <!-- Tailwind via CDN (no build step). -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Schema.org structured data for SEO + LLM crawlers -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Flock",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS, Linux",
+    "description": "Self-hosted LLM gateway with OpenAI- and Anthropic-compatible APIs. Orchestrates Ollama, vLLM, and MLX-LM across one or many machines.",
+    "url": "https://flockllm.com",
+    "downloadUrl": "https://github.com/hadihonarvar/flock/releases/latest",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "softwareVersion": "0.4",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Person", "name": "Hadi Honarvar" }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Flock?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Flock is a self-hosted LLM gateway. It runs on your own Mac or Linux machines, talks to Ollama (or vLLM, MLX) underneath, and exposes those models through APIs that are drop-in compatible with OpenAI and Anthropic — so Cursor, Claude Code, Aider, and any OpenAI/Anthropic SDK just work."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is Flock different from Ollama?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ollama is a single-user inference engine. Flock adds the org/team layer on top: per-user API keys, daily quotas, audit log, multi-machine routing, Anthropic-API compatibility (so Claude Code works), and sharding orchestration — all in one Go binary with an embedded web UI."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can Claude Code use a local model via Flock?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Set ANTHROPIC_BASE_URL=http://localhost:8080, ANTHROPIC_AUTH_TOKEN=your-flock-key, ANTHROPIC_MODEL=llama-3.2-1b (or any local catalog id). Claude Code now talks to your local model instead of paying for the API."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Flock work across multiple machines?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The leader machine runs flock up. Every other machine runs flock join. The leader's router automatically dispatches requests to whichever worker has the model loaded, and llama.cpp-RPC sharding lets one large model run split across many machines."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-feature-settings: "ss01", "cv11"; }
+    .ascii { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; line-height: 1.25rem; white-space: pre; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 500; }
+    .anchor-pad { scroll-margin-top: 80px; }
+    details > summary { cursor: pointer; list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+  </style>
+</head>
+<body class="bg-white text-slate-900 font-sans antialiased">
+
+  <!-- ============================ NAV ============================ -->
+  <header class="sticky top-0 z-50 bg-slate-900/95 backdrop-blur text-white border-b border-slate-800">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-2 group">
+        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 17l9 5 9-5"/><path d="M3 12l9 5 9-5"/></svg>
+        <span class="font-bold tracking-tight text-lg">Flock</span>
+        <span class="text-slate-400 text-xs hidden sm:inline">self-hosted LLM gateway</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-6 text-sm">
+        <a href="#what" class="text-slate-300 hover:text-white">What it is</a>
+        <a href="#quickstart" class="text-slate-300 hover:text-white">Quick start</a>
+        <a href="#dashboard" class="text-slate-300 hover:text-white">Interface</a>
+        <a href="#cluster" class="text-slate-300 hover:text-white">Cluster</a>
+        <a href="#compare" class="text-slate-300 hover:text-white">Compare</a>
+        <a href="#docs" class="text-slate-300 hover:text-white">Docs</a>
+        <a href="https://github.com/hadihonarvar/flock" class="bg-white text-slate-900 px-3 py-1.5 rounded font-medium hover:bg-slate-100">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ============================ HERO ============================ -->
+    <section class="bg-gradient-to-b from-slate-900 to-slate-800 text-white">
+      <div class="max-w-6xl mx-auto px-6 py-20 md:py-28">
+        <div class="max-w-3xl">
+          <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">v0.1.0 · Apache-2.0 · open source</span>
+          <h1 class="mt-5 text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+            One endpoint.<br/>Every LLM.<br/>
+            <span class="text-emerald-400">Your hardware.</span>
+          </h1>
+          <p class="mt-6 text-lg md:text-xl text-slate-300 leading-relaxed">
+            Flock is a <strong class="text-white">self-hosted LLM gateway</strong> that runs on your own Mac or Linux machines.
+            One Go binary exposes <strong class="text-white">OpenAI- and Anthropic-compatible APIs</strong> on top of
+            Ollama / vLLM / MLX, with per-user keys, quotas, audit log, multi-machine routing, and llama.cpp sharding —
+            all behind a single endpoint your team's existing tools already speak.
+          </p>
+
+          <div class="mt-8 bg-slate-950/70 border border-slate-700 rounded-lg p-4 max-w-2xl">
+            <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">Try it in 60 seconds</div>
+            <pre class="font-mono text-sm text-emerald-300 overflow-x-auto leading-relaxed">$ brew install --cask ollama &amp;&amp; open -a Ollama
+$ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+$ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
+          </div>
+
+          <div class="mt-8 flex flex-wrap gap-3">
+            <a href="#quickstart" class="bg-emerald-500 text-slate-900 px-5 py-3 rounded-lg font-semibold hover:bg-emerald-400">Get started →</a>
+            <a href="https://github.com/hadihonarvar/flock" class="bg-slate-700 text-white px-5 py-3 rounded-lg font-semibold hover:bg-slate-600 border border-slate-600">⭐ Star on GitHub</a>
+            <a href="#dashboard" class="text-slate-300 hover:text-white px-5 py-3 rounded-lg font-semibold">See the interface ↓</a>
+          </div>
+
+          <div class="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400">
+            <span class="flex items-center gap-1.5">✓ Mac (Apple Silicon)</span>
+            <span class="flex items-center gap-1.5">✓ Linux (x86_64 / arm64)</span>
+            <span class="flex items-center gap-1.5">✓ Cursor · Claude Code · Aider</span>
+            <span class="flex items-center gap-1.5">✓ No Docker. No Python. No k8s.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ WHAT IS FLOCK ============================ -->
+    <section id="what" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl">
+          <h2 class="text-3xl md:text-4xl font-bold tracking-tight">What Flock does, in plain English</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            Think of Flock as <strong>"Ollama with an org layer + Claude-Code-compatible API."</strong>
+            Your team's AI tools talk to <em>one</em> endpoint; Flock decides whether to serve from your own machines
+            (free + private) or transparently fall back to real Claude / GPT (paid, logged).
+          </p>
+        </div>
+
+        <div class="mt-12 grid md:grid-cols-3 gap-6">
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <div class="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-lg flex items-center justify-center text-xl">🧠</div>
+            <h3 class="mt-4 font-semibold text-lg">Local models, one API</h3>
+            <p class="mt-2 text-slate-600 text-sm leading-relaxed">
+              Runs Ollama / vLLM / MLX underneath. Exposes them through
+              <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">/v1/chat/completions</span>
+              (OpenAI) and
+              <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">/v1/messages</span>
+              (Anthropic) — so <strong>Claude Code works against your local Llama</strong>.
+            </p>
+          </div>
+
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <div class="w-10 h-10 bg-blue-100 text-blue-700 rounded-lg flex items-center justify-center text-xl">🔑</div>
+            <h3 class="mt-4 font-semibold text-lg">Team-ready out of the box</h3>
+            <p class="mt-2 text-slate-600 text-sm leading-relaxed">
+              Per-user API keys with scopes (admin / user / node), daily token quotas, audit log of every call,
+              Prometheus metrics, embedded admin web UI. No nginx, no LiteLLM-plus-Python — just one binary.
+            </p>
+          </div>
+
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <div class="w-10 h-10 bg-purple-100 text-purple-700 rounded-lg flex items-center justify-center text-xl">🌐</div>
+            <h3 class="mt-4 font-semibold text-lg">Scales from 1 to N machines</h3>
+            <p class="mt-2 text-slate-600 text-sm leading-relaxed">
+              Start on a laptop. Add more machines with one <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock join</span> command.
+              Router load-balances replicas. For models too big for any single box,
+              <strong>built-in llama.cpp-RPC sharding</strong> splits one model across many.
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-10 bg-slate-900 text-slate-100 rounded-lg p-6">
+          <h3 class="font-semibold text-lg">The honest one-line pitch</h3>
+          <p class="mt-2 text-slate-300 leading-relaxed">
+            The only OSS tool that ships, in <strong class="text-white">one Go binary</strong>, all of:
+            OpenAI-compatible API <strong class="text-white">+</strong> Anthropic-compatible API <strong class="text-white">+</strong>
+            multi-tenant auth/quotas/audit <strong class="text-white">+</strong> multi-node routing <strong class="text-white">+</strong>
+            automatic sharding <strong class="text-white">+</strong> embedded admin UI —
+            designed for self-hosting on a Mac + Linux team fleet.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ DASHBOARD MOCKUP ============================ -->
+    <section id="dashboard" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-blue-100 text-blue-700">Interface</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">An admin UI that ships with the binary</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            Embedded via <code class="font-mono text-sm bg-slate-200 px-1.5 py-0.5 rounded">//go:embed</code>. No separate frontend to deploy.
+            Sign in by pasting the admin key Flock prints on first run. Every action also works from the CLI.
+          </p>
+        </div>
+
+        <!-- ===== Mocked browser window ===== -->
+        <div class="rounded-xl shadow-2xl border border-slate-300 overflow-hidden bg-white">
+          <!-- browser chrome -->
+          <div class="bg-slate-200 px-4 py-2.5 flex items-center gap-2 border-b border-slate-300">
+            <span class="w-3 h-3 rounded-full bg-red-400"></span>
+            <span class="w-3 h-3 rounded-full bg-amber-400"></span>
+            <span class="w-3 h-3 rounded-full bg-emerald-400"></span>
+            <div class="ml-4 flex-1 bg-white border border-slate-300 rounded text-xs text-slate-600 px-3 py-1 font-mono">
+              http://localhost:8080
+            </div>
+          </div>
+
+          <!-- app header -->
+          <div class="bg-slate-900 text-white">
+            <div class="px-6 py-4 flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="font-bold text-xl">Flock</div>
+                <div class="text-xs text-slate-400">orchestrate open LLMs · your hardware</div>
+              </div>
+              <div class="text-xs"><span class="text-slate-400">key:</span> <span class="font-mono">sk-orc-xK9p…</span></div>
+            </div>
+            <nav class="px-6 flex gap-1 text-sm">
+              <button class="px-4 py-2 bg-slate-800 text-white font-medium">Dashboard</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Nodes</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Models</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Shards</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Tokens</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Usage</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Audit</button>
+              <button class="px-4 py-2 text-slate-300 hover:text-white">Settings</button>
+            </nav>
+          </div>
+
+          <!-- dashboard body -->
+          <div class="p-6 space-y-6 bg-slate-50">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div class="bg-white border border-slate-200 rounded p-4">
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Nodes</div>
+                <div class="text-2xl font-semibold mt-1">3</div>
+                <div class="text-xs text-slate-500 mt-1">all ready</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded p-4">
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Models</div>
+                <div class="text-2xl font-semibold mt-1">5</div>
+                <div class="text-xs text-slate-500 mt-1">1 sharded</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded p-4">
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Recent requests</div>
+                <div class="text-2xl font-semibold mt-1">2,847</div>
+                <div class="text-xs text-slate-500 mt-1">last 200</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded p-4">
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Tokens served</div>
+                <div class="text-2xl font-semibold mt-1">1.2M</div>
+                <div class="text-xs text-emerald-600 mt-1">saved ~$340 vs API</div>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-3">Cluster</div>
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-xs text-slate-500 border-b border-slate-200">
+                    <th class="text-left pb-2 font-semibold">ID</th>
+                    <th class="text-left pb-2 font-semibold">Hostname</th>
+                    <th class="text-left pb-2 font-semibold">Hardware</th>
+                    <th class="text-left pb-2 font-semibold">Loaded model</th>
+                    <th class="text-left pb-2 font-semibold">State</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr>
+                    <td class="py-2.5 font-mono text-xs">local</td>
+                    <td class="py-2.5">mbp-hadi</td>
+                    <td class="py-2.5">M3 / 24 GB</td>
+                    <td class="py-2.5 font-mono text-xs">llama-3.2-1b</td>
+                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
+                  </tr>
+                  <tr>
+                    <td class="py-2.5 font-mono text-xs">n_abc123</td>
+                    <td class="py-2.5">mac-mini-office</td>
+                    <td class="py-2.5">M4 Pro / 64 GB</td>
+                    <td class="py-2.5 font-mono text-xs">qwen-coder-14b</td>
+                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
+                  </tr>
+                  <tr>
+                    <td class="py-2.5 font-mono text-xs">n_def456</td>
+                    <td class="py-2.5">gpu-tower</td>
+                    <td class="py-2.5">2× RTX 5090</td>
+                    <td class="py-2.5 font-mono text-xs">qwen3-72b-awq</td>
+                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="bg-slate-900 text-emerald-300 rounded p-4 font-mono text-xs leading-relaxed overflow-x-auto">
+<span class="text-slate-500"># Try it from any terminal:</span>
+$ curl http://localhost:8080/v1/chat/completions \
+    -H 'Authorization: Bearer sk-orc-xK9p…' \
+    -d '{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</div>
+          </div>
+        </div>
+
+        <p class="mt-6 text-sm text-slate-500 text-center">
+          Mocked preview — actual UI ships embedded in the Flock binary. <a href="https://github.com/hadihonarvar/flock/blob/main/internal/ui/index.html" class="underline">View the real source on GitHub →</a>
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================ QUICK START ============================ -->
+    <section id="quickstart" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-emerald-100 text-emerald-700">Get started</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Install &amp; first chat in 3 minutes</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Pick your platform — 4 commands each.</p>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+          <button onclick="showOS('mac')" id="tab-mac" class="px-4 py-2 rounded-t-lg bg-slate-900 text-white text-sm font-medium">🍎 macOS</button>
+          <button onclick="showOS('linux')" id="tab-linux" class="px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium">🐧 Linux</button>
+        </div>
+
+        <div id="os-mac" class="bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 font-mono text-sm leading-relaxed">
+<span class="text-slate-500"># 1. install Ollama (use the cask — plain `brew install ollama` is broken on Apple Silicon)</span>
+<span class="text-emerald-400">brew install --cask ollama</span>
+<span class="text-emerald-400">open -a Ollama</span>
+
+<span class="text-slate-500"># 2. install Flock</span>
+<span class="text-emerald-400">curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh</span>
+
+<span class="text-slate-500"># 3. add install dir to PATH if the installer says so</span>
+<span class="text-emerald-400">export PATH="$HOME/.local/bin:$PATH"</span>
+
+<span class="text-slate-500"># 4. start Flock with a tiny model (~1 GB, fast)</span>
+<span class="text-emerald-400">FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</span></div>
+
+        <div id="os-linux" class="hidden bg-slate-900 text-slate-100 rounded-r-lg rounded-bl-lg p-6 font-mono text-sm leading-relaxed">
+<span class="text-slate-500"># 1. install Ollama</span>
+<span class="text-emerald-400">curl -fsSL https://ollama.com/install.sh | sh</span>
+<span class="text-emerald-400">sudo systemctl enable --now ollama</span>
+
+<span class="text-slate-500"># 2. install Flock</span>
+<span class="text-emerald-400">curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh</span>
+
+<span class="text-slate-500"># 3. add install dir to PATH if needed</span>
+<span class="text-emerald-400">echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc &amp;&amp; source ~/.bashrc</span>
+
+<span class="text-slate-500"># 4. start Flock with a tiny model (~1 GB, fast)</span>
+<span class="text-emerald-400">FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</span></div>
+
+        <div class="mt-12 grid md:grid-cols-2 gap-6">
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold mb-3">After it boots you'll see</h3>
+            <pre class="font-mono text-xs text-slate-700 leading-relaxed overflow-x-auto bg-white p-3 rounded border">✔ default model: llama-3.2-1b
+✔ engine: ollama at http://127.0.0.1:11434
+
+  Flock is ready.
+
+  API:    http://localhost:8080/v1
+  Health: http://localhost:8080/healthz
+
+  Admin API key (shown once — store it now):
+    sk-orc-xK9p…</pre>
+            <p class="mt-3 text-sm text-slate-600">Copy the admin key. You'll need it next.</p>
+          </div>
+
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold mb-3">Test it (pick one)</h3>
+            <div class="space-y-3 text-sm">
+              <div>
+                <div class="font-medium text-slate-700">curl</div>
+                <code class="text-xs font-mono text-slate-600 break-all">curl :8080/v1/chat/completions -H "Authorization: Bearer sk-orc-..." -d '{"model":"auto","messages":[…]}'</code>
+              </div>
+              <div>
+                <div class="font-medium text-slate-700">Web UI</div>
+                <code class="text-xs font-mono text-slate-600">http://localhost:8080</code>
+                <span class="text-slate-500 text-xs"> → paste the admin key</span>
+              </div>
+              <div>
+                <div class="font-medium text-slate-700">Claude Code</div>
+                <code class="text-xs font-mono text-slate-600 block">export ANTHROPIC_BASE_URL=http://localhost:8080</code>
+                <code class="text-xs font-mono text-slate-600 block">export ANTHROPIC_AUTH_TOKEN=sk-orc-...</code>
+                <code class="text-xs font-mono text-slate-600 block">export ANTHROPIC_MODEL=llama-3.2-1b</code>
+                <code class="text-xs font-mono text-slate-600">claude</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ ARCHITECTURE ============================ -->
+    <section id="architecture" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-purple-100 text-purple-700">Architecture</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">What runs where</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            One machine is enough for most teams. Add more when you want throughput, redundancy, or a model that doesn't fit on a single box.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-1">Single machine</h3>
+            <p class="text-sm text-slate-500 mb-4">Solo dev or small team sharing one box.</p>
+            <div class="ascii text-slate-700 bg-slate-50 p-4 rounded border border-slate-200 overflow-x-auto">              Your computer  (Mac or Linux)
+   ┌─────────────────────────────────────────────────┐
+   │                                                 │
+   │   Cursor / Claude Code / curl / SDKs            │
+   │                       │                         │
+   │                       ▼                         │
+   │             FLOCK  :8080                        │
+   │             (gateway · auth · UI · audit)       │
+   │                       │                         │
+   │                       ▼                         │
+   │             Ollama  :11434                      │
+   │             (the actual LLM)                    │
+   │                                                 │
+   └─────────────────────────────────────────────────┘</div>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-1">Multiple machines</h3>
+            <p class="text-sm text-slate-500 mb-4">Leader + workers. Router decides per request.</p>
+            <div class="ascii text-slate-700 bg-slate-50 p-4 rounded border border-slate-200 overflow-x-auto">       LEADER                          WORKER
+   ┌──────────────┐               ┌──────────────┐
+   │ flock up     │               │ flock join   │
+   │  ─────────   │               │  ─────────   │
+   │  Router      │ ───routes──▶  │  agent       │
+   │  + UI        │     :8081     │  + Ollama    │
+   │  + auth      │ ◀──heartbeat──│              │
+   │  + Ollama    │   every 5s    │  loaded      │
+   │              │               │  models      │
+   └──────────────┘               └──────────────┘
+                LAN / Tailscale</div>
+          </div>
+        </div>
+
+        <div class="mt-8 bg-white border border-slate-200 rounded-lg p-6">
+          <h3 class="font-semibold text-lg mb-1">Sharded model (one big model across many machines)</h3>
+          <p class="text-sm text-slate-500 mb-4">For models too large for any single box — e.g. Llama 70B Q4 across 2× Mac Mini via llama.cpp RPC. <code class="font-mono text-xs bg-slate-100 px-1 rounded">flock shard create &lt;model&gt; &lt;N&gt;</code> does all of this automatically:</p>
+          <div class="ascii text-slate-700 bg-slate-50 p-4 rounded border border-slate-200 overflow-x-auto">    Client request for "llama-3.3-70b-sharded"
+                  │
+                  ▼
+       ┌──────────────────────┐
+       │  LEADER (coordinator)│       ┌──────────────────────┐
+       │  llama-server        │ RPC   │  WORKER A            │
+       │   --rpc A:50052,     │ ────▶ │  rpc-server :50052   │ (layers 1-40)
+       │       B:50052        │ ◀──── │  (auto-launched      │
+       │                      │       │   by Flock)          │
+       │  serves OpenAI API   │       └──────────────────────┘
+       │  to clients          │       ┌──────────────────────┐
+       │                      │ ────▶ │  WORKER B            │
+       │                      │ ◀──── │  rpc-server :50052   │ (layers 41-80)
+       └──────────────────────┘       └──────────────────────┘</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ FEATURES ============================ -->
+    <section id="features" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-amber-100 text-amber-700">Features</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">What's in the box</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Everything below is in the Go binary you download. No add-ons, no separate services.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- API surface -->
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🔌 OpenAI + Anthropic APIs</div>
+            <p class="text-sm text-slate-600 leading-relaxed"><code class="font-mono text-xs bg-slate-100 px-1 rounded">/v1/chat/completions</code> + <code class="font-mono text-xs bg-slate-100 px-1 rounded">/v1/messages</code>. SSE streaming. Tool calls. The whole shape both SDKs expect.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">⚙️ Multi-backend engines</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Ollama, vLLM, MLX-LM, llama.cpp (incl. RPC mode for sharding). Hot-swappable via config.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🔁 Hybrid vendor fallback</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Set <code class="font-mono text-xs bg-slate-100 px-1 rounded">ANTHROPIC_API_KEY</code> / <code class="font-mono text-xs bg-slate-100 px-1 rounded">OPENAI_API_KEY</code>. Requests for <code>claude-*</code> / <code>gpt-*</code> transparently proxy upstream, logged the same as local.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🔑 Multi-tenant auth</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Per-user API keys (sha256-hashed). Scopes: admin / user / node. Daily token quotas. Revocation immediate.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">📊 Usage + audit</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Every request recorded (user, model, tokens, latency, outcome). Admin actions audited. Cost-saved-vs-API counter.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">📈 Prometheus metrics</div>
+            <p class="text-sm text-slate-600 leading-relaxed"><code class="font-mono text-xs bg-slate-100 px-1 rounded">/metrics</code> exposes RPS, TTFT, tokens, queue depth, model loaded gauges. Scrape with any Prometheus.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🌐 Multi-node routing</div>
+            <p class="text-sm text-slate-600 leading-relaxed"><code class="font-mono text-xs bg-slate-100 px-1 rounded">flock join</code>. Router picks local-first, then least-loaded worker. Heartbeats reconcile placements every 5s.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🪓 Auto-sharding</div>
+            <p class="text-sm text-slate-600 leading-relaxed"><code class="font-mono text-xs bg-slate-100 px-1 rounded">flock shard create</code> launches <code>rpc-server</code> on workers + the coordinator <code>llama-server</code> on the leader. One command, full orchestration.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🖥️ Embedded web UI</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Tailwind via CDN, vanilla JS, served from <code class="font-mono text-xs bg-slate-100 px-1 rounded">/</code>. 7 tabs covering every admin action.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">📦 One-line install</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Single Go binary. SHA-256 verified. Detects Ollama. Tries user-dirs before sudo.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">📖 CLI ↔ UI parity</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Every admin action works both ways. Every command has <code class="font-mono text-xs bg-slate-100 px-1 rounded">--help</code> with examples.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🆓 Apache-2.0</div>
+            <p class="text-sm text-slate-600 leading-relaxed">No open-core gotchas. Commercial use, modification, embedding all OK. Patent grant included.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ CLUSTER (multi-machine) ============================ -->
+    <section id="cluster" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-blue-100 text-blue-700">Multi-machine</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Add a second machine</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            Same install command on every machine. The first becomes the <strong>leader</strong>; the rest become <strong>workers</strong>.
+            That's the whole protocol.
+          </p>
+        </div>
+
+        <ol class="space-y-6">
+          <li class="flex gap-4 items-start">
+            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-slate-900 text-white text-sm font-semibold flex items-center justify-center">1</span>
+            <div class="flex-1">
+              <div class="font-semibold">On the leader</div>
+              <p class="text-sm text-slate-600 mt-1">Issue a one-time worker join token.</p>
+              <pre class="mt-2 bg-slate-900 text-emerald-300 p-3 rounded text-xs font-mono overflow-x-auto">$ flock token create --node
+✔ sk-orc-NodeJoin-AbCd1234…</pre>
+            </div>
+          </li>
+
+          <li class="flex gap-4 items-start">
+            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-slate-900 text-white text-sm font-semibold flex items-center justify-center">2</span>
+            <div class="flex-1">
+              <div class="font-semibold">On the new machine</div>
+              <p class="text-sm text-slate-600 mt-1">Install Flock + Ollama the same way as before, then:</p>
+              <pre class="mt-2 bg-slate-900 text-emerald-300 p-3 rounded text-xs font-mono overflow-x-auto">$ flock join http://leader.local:8080?token=sk-orc-NodeJoin-AbCd1234…</pre>
+            </div>
+          </li>
+
+          <li class="flex gap-4 items-start">
+            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-slate-900 text-white text-sm font-semibold flex items-center justify-center">3</span>
+            <div class="flex-1">
+              <div class="font-semibold">Install a model on the worker</div>
+              <p class="text-sm text-slate-600 mt-1">So it has something to serve.</p>
+              <pre class="mt-2 bg-slate-900 text-emerald-300 p-3 rounded text-xs font-mono overflow-x-auto">$ flock model add qwen-coder-7b</pre>
+            </div>
+          </li>
+
+          <li class="flex gap-4 items-start">
+            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500 text-white text-sm font-semibold flex items-center justify-center">✓</span>
+            <div class="flex-1">
+              <div class="font-semibold">Back on the leader, verify</div>
+              <pre class="mt-2 bg-slate-900 text-emerald-300 p-3 rounded text-xs font-mono overflow-x-auto">$ flock node ls
+ID         HOSTNAME    OS/ARCH       STATE
+local      mbp-hadi    darwin/arm64  ready
+n_abc123   mac-mini    darwin/arm64  ready</pre>
+              <p class="mt-2 text-sm text-slate-600">From now on, any request for <code class="font-mono text-xs bg-slate-100 px-1 rounded">qwen-coder-7b</code> automatically routes to the worker. Install the same model on multiple workers → automatic load balancing.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============================ COMPARE ============================ -->
+    <section id="compare" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-rose-100 text-rose-700">Compare</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">vs the alternatives</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Flock sits at the intersection of three categories that mostly don't overlap.</p>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="bg-slate-100 border-b border-slate-300">
+                <th class="text-left p-3 font-semibold">Feature</th>
+                <th class="text-center p-3 font-semibold">Flock</th>
+                <th class="text-center p-3 font-semibold">Ollama</th>
+                <th class="text-center p-3 font-semibold">LiteLLM</th>
+                <th class="text-center p-3 font-semibold">exo</th>
+                <th class="text-center p-3 font-semibold">LocalAI</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              <tr><td class="p-3">OpenAI-compatible API</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td></tr>
+              <tr><td class="p-3">Anthropic-compatible API (Claude Code)</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Per-user API keys + quotas</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Audit log</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Multi-machine routing</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Auto-sharding (one model across N machines)</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Hybrid local + vendor fallback</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td></tr>
+              <tr><td class="p-3">Embedded admin UI</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td><td class="text-center text-amber-500">partial</td></tr>
+              <tr><td class="p-3">Single binary (no Python/Docker/k8s)</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-slate-400">✗</td><td class="text-center text-slate-400">✗</td><td class="text-center text-amber-500">partial</td></tr>
+              <tr><td class="p-3">Apache-2.0</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td><td class="text-center text-emerald-600">✓</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-6 text-sm text-slate-500">
+          <strong>Honest framing:</strong> any single feature above is available in one of the alternatives. The combination — OpenAI + Anthropic + multi-tenant + multi-node + sharding + UI, all in one Go binary — is what Flock uniquely offers.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ DOCS / CLI ============================ -->
+    <section id="docs" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-slate-200 text-slate-700">Docs</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">CLI reference</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Every command supports <code class="font-mono text-sm bg-slate-200 px-1.5 py-0.5 rounded">--help</code> with examples.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Lifecycle</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock up</dt><dd class="text-slate-600">Start local node (leader on first run)</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock down</dt><dd class="text-slate-600">Stop the local node</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock status</dt><dd class="text-slate-600">Cluster status summary</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock join &lt;url&gt;?token=…</dt><dd class="text-slate-600">Join as a worker</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock doctor</dt><dd class="text-slate-600">Diagnose common problems</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock version</dt><dd class="text-slate-600">Print version</dd></div>
+            </dl>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Nodes</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock node ls</dt><dd class="text-slate-600">List nodes</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock node show &lt;id&gt;</dt><dd class="text-slate-600">Inspect a node</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock node drain &lt;id&gt;</dt><dd class="text-slate-600">Stop routing to it</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock node remove &lt;id&gt;</dt><dd class="text-slate-600">Forget a node</dd></div>
+            </dl>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Models</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock model search [q]</dt><dd class="text-slate-600">Browse catalog</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock model add &lt;id&gt;</dt><dd class="text-slate-600">Install (auto-delegates if sharded)</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock model ls</dt><dd class="text-slate-600">List installed</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock model remove &lt;id&gt;</dt><dd class="text-slate-600">Uninstall</dd></div>
+            </dl>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Sharded models</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock shard create &lt;m&gt; [N]</dt><dd class="text-slate-600">Orchestrate sharded model across N workers</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock shard ls</dt><dd class="text-slate-600">List shards</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock shard remove &lt;m&gt;</dt><dd class="text-slate-600">Tear down</dd></div>
+            </dl>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Tokens / users</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock token create [name]</dt><dd class="text-slate-600">Issue API key (--admin, --node)</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock token ls</dt><dd class="text-slate-600">List API keys</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock token revoke &lt;id&gt;</dt><dd class="text-slate-600">Revoke a key</dd></div>
+            </dl>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg mb-3">Observability + config</h3>
+            <dl class="space-y-2 text-sm">
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock usage [--limit N]</dt><dd class="text-slate-600">Recent inference records</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock audit [--limit N]</dt><dd class="text-slate-600">Recent admin actions</dd></div>
+              <div class="flex"><dt class="font-mono w-44 text-slate-700 flex-shrink-0">flock config show</dt><dd class="text-slate-600">Effective config (secrets redacted)</dd></div>
+            </dl>
+          </div>
+        </div>
+
+        <div class="mt-10">
+          <h3 class="font-semibold text-lg mb-3">Connect your tools</h3>
+          <div class="bg-white border border-slate-200 rounded-lg p-6">
+            <div class="grid md:grid-cols-3 gap-6 text-sm">
+              <div>
+                <div class="font-semibold mb-1">Cursor / Continue / Aider</div>
+                <p class="text-slate-600 mb-2">Set OpenAI base URL:</p>
+                <pre class="text-xs bg-slate-50 p-2 rounded font-mono">http://localhost:8080/v1</pre>
+                <p class="text-slate-600 mt-2">API key: <code class="font-mono text-xs">sk-orc-…</code></p>
+              </div>
+              <div>
+                <div class="font-semibold mb-1">Claude Code</div>
+                <pre class="text-xs bg-slate-50 p-2 rounded font-mono leading-relaxed">ANTHROPIC_BASE_URL=http://localhost:8080
+ANTHROPIC_AUTH_TOKEN=sk-orc-…
+ANTHROPIC_MODEL=llama-3.2-1b</pre>
+              </div>
+              <div>
+                <div class="font-semibold mb-1">OpenAI / Anthropic SDK</div>
+                <pre class="text-xs bg-slate-50 p-2 rounded font-mono leading-relaxed">OpenAI(
+  base_url="http://localhost:8080/v1",
+  api_key="sk-orc-…"
+)</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-10 grid md:grid-cols-3 gap-4 text-sm">
+          <a href="https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md" class="bg-white border border-slate-200 hover:border-slate-400 rounded-lg p-4 group">
+            <div class="font-semibold group-hover:text-emerald-600">QUICKSTART.md →</div>
+            <p class="text-slate-600 mt-1">3-min new-user landing page with diagrams</p>
+          </a>
+          <a href="https://github.com/hadihonarvar/flock/blob/main/README.md" class="bg-white border border-slate-200 hover:border-slate-400 rounded-lg p-4 group">
+            <div class="font-semibold group-hover:text-emerald-600">README.md →</div>
+            <p class="text-slate-600 mt-1">Full reference: API, config, troubleshooting</p>
+          </a>
+          <a href="https://github.com/hadihonarvar/flock/blob/main/ARCHITECTURE.md" class="bg-white border border-slate-200 hover:border-slate-400 rounded-lg p-4 group">
+            <div class="font-semibold group-hover:text-emerald-600">ARCHITECTURE.md →</div>
+            <p class="text-slate-600 mt-1">Contributor deep-dive into internals</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ SECURITY ============================ -->
+    <section id="security" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-red-100 text-red-700">Security</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Security model</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Flock assumes a <strong>trusted network</strong> (LAN or Tailscale) for cluster traffic. Honest about what's protected and what isn't.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg text-emerald-900 mb-3">What's strongly protected</h3>
+            <ul class="space-y-2 text-sm text-emerald-900">
+              <li><strong>User API keys</strong> stored as sha256 hashes — plaintext shown only at creation</li>
+              <li><strong>Worker HTTP servers</strong> bind to the mesh address (LAN / tailnet IP), never <code>0.0.0.0</code></li>
+              <li><strong>Web UI auth</strong> by pasted admin key (in browser <code>localStorage</code>)</li>
+              <li>Quotas + audit log limit damage from a leaked key</li>
+              <li>Vendor fallback uses team-scoped vendor keys, never the user's</li>
+            </ul>
+          </div>
+
+          <div class="bg-amber-50 border border-amber-200 rounded-lg p-6">
+            <h3 class="font-semibold text-lg text-amber-900 mb-3">What requires LAN trust</h3>
+            <ul class="space-y-2 text-sm text-amber-900">
+              <li><strong>Worker tokens</strong> are stored plaintext in <code>nodes.worker_token</code> on the leader's SQLite</li>
+              <li>Anyone with read access to the leader's DB can impersonate a worker</li>
+              <li>HMAC-based mutual auth is on the v0.5 roadmap</li>
+              <li><strong>For hostile networks</strong> run the cluster behind Tailscale or a zero-trust overlay</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ ROADMAP ============================ -->
+    <section id="roadmap" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-purple-100 text-purple-700">Roadmap</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">What's shipped &amp; what's next</h2>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-6">
+            <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped (v0.4)</h3>
+            <ul class="space-y-1.5 text-sm text-emerald-900">
+              <li>• OpenAI + Anthropic API surface, streaming, tool use</li>
+              <li>• Ollama / vLLM / MLX / llama.cpp drivers</li>
+              <li>• Per-user keys, quotas, audit, usage metering, Prometheus</li>
+              <li>• Hybrid local + Anthropic/OpenAI fallback</li>
+              <li>• Multi-node routing with heartbeat + placements</li>
+              <li>• Sharding auto-orchestration (rpc-server + coordinator)</li>
+              <li>• Embedded web UI with full CLI parity</li>
+              <li>• Install one-liner + signed binaries (v0.1.0)</li>
+            </ul>
+          </div>
+
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <h3 class="font-semibold text-blue-900 mb-3">→ Next (v0.5+)</h3>
+            <ul class="space-y-1.5 text-sm text-blue-900">
+              <li>• Tailscale (<code>tsnet</code>) mesh for NAT traversal + mTLS</li>
+              <li>• OIDC for web UI</li>
+              <li>• HMAC-based worker token mutual auth</li>
+              <li>• Shard crash detection + auto-restart</li>
+              <li>• Coordinator placement on workers (not just leader)</li>
+              <li>• Auto-distribution of model weights to workers</li>
+              <li>• LoRA adapter loading</li>
+              <li>• Vision + Whisper endpoints</li>
+              <li>• Postgres backend for HA control plane</li>
+              <li>• AMD ROCm path</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ FINAL CTA ============================ -->
+    <section class="py-20 bg-gradient-to-b from-slate-900 to-slate-950 text-white">
+      <div class="max-w-3xl mx-auto px-6 text-center">
+        <h2 class="text-3xl md:text-5xl font-bold tracking-tight">Get started in 3 minutes</h2>
+        <p class="mt-4 text-lg text-slate-300">No signup. No SaaS. Just a binary.</p>
+        <div class="mt-8 bg-slate-950/70 border border-slate-700 rounded-lg p-4 text-left max-w-2xl mx-auto">
+          <pre class="font-mono text-sm text-emerald-300 overflow-x-auto">$ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh</pre>
+        </div>
+        <div class="mt-8 flex flex-wrap justify-center gap-3">
+          <a href="https://github.com/hadihonarvar/flock" class="bg-emerald-500 text-slate-900 px-6 py-3 rounded-lg font-semibold hover:bg-emerald-400">⭐ Star on GitHub</a>
+          <a href="https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md" class="bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold hover:bg-slate-600 border border-slate-600">Read QUICKSTART →</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================ FOOTER ============================ -->
+  <footer class="bg-slate-900 text-slate-400 text-sm">
+    <div class="max-w-6xl mx-auto px-6 py-12 grid md:grid-cols-4 gap-8">
+      <div>
+        <div class="flex items-center gap-2 text-white font-semibold mb-3">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 17l9 5 9-5"/><path d="M3 12l9 5 9-5"/></svg>
+          Flock
+        </div>
+        <p class="leading-relaxed">Self-hosted LLM gateway. One Go binary. Apache-2.0.</p>
+      </div>
+
+      <div>
+        <div class="text-white font-semibold mb-3">Project</div>
+        <ul class="space-y-1.5">
+          <li><a href="https://github.com/hadihonarvar/flock" class="hover:text-white">GitHub</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/releases" class="hover:text-white">Releases</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/issues" class="hover:text-white">Issues</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/LICENSE" class="hover:text-white">License (Apache-2.0)</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="text-white font-semibold mb-3">Docs</div>
+        <ul class="space-y-1.5">
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md" class="hover:text-white">Quick start</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/README.md" class="hover:text-white">Full reference</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/ARCHITECTURE.md" class="hover:text-white">Architecture</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/TASKS.md" class="hover:text-white">Roadmap</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="text-white font-semibold mb-3">Contact</div>
+        <ul class="space-y-1.5">
+          <li><a href="mailto:hadi.work.ca@gmail.com" class="hover:text-white">hadi.work.ca@gmail.com</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/security/advisories/new" class="hover:text-white">Security advisories</a></li>
+          <li><a href="https://github.com/hadihonarvar/flock/blob/main/SECURITY.md" class="hover:text-white">Security policy</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="border-t border-slate-800">
+      <div class="max-w-6xl mx-auto px-6 py-6 flex flex-col md:flex-row justify-between gap-2 text-xs text-slate-500">
+        <div>© Flock contributors. Apache License 2.0.</div>
+        <div>Built with Go &amp; coffee. No telemetry. No tracking.</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Minimal vanilla JS for OS tabs -->
+  <script>
+    function showOS(os) {
+      const mac = document.getElementById('os-mac');
+      const linux = document.getElementById('os-linux');
+      const tabMac = document.getElementById('tab-mac');
+      const tabLinux = document.getElementById('tab-linux');
+      if (os === 'mac') {
+        mac.classList.remove('hidden');
+        linux.classList.add('hidden');
+        tabMac.className = 'px-4 py-2 rounded-t-lg bg-slate-900 text-white text-sm font-medium';
+        tabLinux.className = 'px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium';
+      } else {
+        mac.classList.add('hidden');
+        linux.classList.remove('hidden');
+        tabLinux.className = 'px-4 py-2 rounded-t-lg bg-slate-900 text-white text-sm font-medium';
+        tabMac.className = 'px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium';
+      }
+    }
+  </script>
+</body>
+</html>
