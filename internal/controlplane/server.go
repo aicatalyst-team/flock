@@ -587,15 +587,15 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
 // running cluster via a typo'd HTTP PUT.
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	type view struct {
-		Listen      string                 `json:"listen"`
-		ExternalURL string                 `json:"external_url"`
-		DataDir     string                 `json:"data_dir"`
-		LogLevel    string                 `json:"log_level"`
-		Engine      map[string]string      `json:"engine"`
-		Router      map[string]any         `json:"router"`
-		Storage     map[string]string      `json:"storage"`
-		Auth        map[string]any         `json:"auth"`
-		EditHint    string                 `json:"edit_hint"`
+		Listen      string            `json:"listen"`
+		ExternalURL string            `json:"external_url"`
+		DataDir     string            `json:"data_dir"`
+		LogLevel    string            `json:"log_level"`
+		Engine      map[string]string `json:"engine"`
+		Router      map[string]any    `json:"router"`
+		Storage     map[string]string `json:"storage"`
+		Auth        map[string]any    `json:"auth"`
+		EditHint    string            `json:"edit_hint"`
 	}
 	v := view{
 		Listen:      s.cfg.Listen,

@@ -6,6 +6,64 @@
 >
 > Point Cursor, Claude Code, Aider, Continue, or any OpenAI/Anthropic SDK at Flock. It just works.
 
+---
+
+## 🚀 Try it in 60 seconds
+
+You need: a Mac (Apple Silicon) or Linux machine.
+
+```bash
+# 1. install Ollama (the actual model engine)
+brew install --cask ollama                                # macOS
+# or:  curl -fsSL https://ollama.com/install.sh | sh      # Linux
+
+# 2. start Ollama
+open -a Ollama                                            # macOS (background)
+# or:  ollama serve &                                     # Linux
+
+# 3. install Flock
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+
+# 4. start Flock with a tiny model (1 GB, fast download)
+FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
+```
+
+Flock prints something like:
+
+```
+✔ default model: llama-3.2-1b
+✔ engine: ollama at http://127.0.0.1:11434
+  Flock is ready.
+  API:    http://localhost:8080/v1
+  Admin API key:   sk-orc-xK9p…
+```
+
+**Copy that admin key.** In another terminal:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-orc-xK9p…" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"hi in 5 words"}]}'
+```
+
+You should see a JSON response with a 5-word reply. 🎉
+
+**Or use the web dashboard**: open `http://localhost:8080` and paste the admin key.
+
+**Or wire up Claude Code**: in any terminal where you use Claude Code, set:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_AUTH_TOKEN=sk-orc-xK9p…
+claude
+```
+
+…and Claude Code talks to your local model instead of paying for the API.
+
+**If something breaks**, run `flock doctor` — it tells you exactly what to fix. Common issues are in the [Troubleshooting installation](#troubleshooting-installation) section.
+
+---
+
 | | |
 |---|---|
 | **Status** | Alpha — build-verified on macOS/arm64; single-node verified end-to-end with curl; multi-node routing landed but not yet tested with two physical machines |

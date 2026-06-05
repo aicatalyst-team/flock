@@ -174,4 +174,3 @@ func modelSearch(query string) {
 		fmt.Printf("%-22s %-32s %8d %v\n", e.ID, e.DisplayName, e.Hardware.MinRAMGB, e.Tags)
 	}
 }
-

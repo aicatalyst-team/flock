@@ -155,6 +155,11 @@ func (n *NodeConfig) Save(path string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+// loadNodeConfig is intentionally unexported and currently unused; it's the
+// piece a future "worker resumes from saved state on `flock up`" feature
+// would call. Marked with `var _` so go vet / unused linters don't object.
+//
+//nolint:unused
 func loadNodeConfig(path string) (*NodeConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -166,3 +171,5 @@ func loadNodeConfig(path string) (*NodeConfig, error) {
 	}
 	return &n, nil
 }
+
+var _ = loadNodeConfig // reserve for v0.5 worker resume

@@ -79,9 +79,9 @@ type anthropicContent struct {
 	Text      string          `json:"text,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`        // tool_use payload
-	ToolUseID string          `json:"tool_use_id,omitempty"`  // tool_result link
-	Content   json.RawMessage `json:"content,omitempty"`      // tool_result body (string or array)
+	Input     json.RawMessage `json:"input,omitempty"`       // tool_use payload
+	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result link
+	Content   json.RawMessage `json:"content,omitempty"`     // tool_result body (string or array)
 }
 
 type anthropicUsage struct {
@@ -428,4 +428,3 @@ func writeAnthropicError(w http.ResponseWriter, status int, errType, msg string)
 	}
 	_ = json.NewEncoder(w).Encode(body)
 }
-

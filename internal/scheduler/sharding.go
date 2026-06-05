@@ -162,7 +162,8 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		o.rollback(ctx, created)
 		return fmt.Errorf("persist coordinator: %w", err)
 	}
-	created = append(created, coordRec)
+	// (The `created` slice isn't read after this point — we're past the
+	// rollback window. Successful return follows.)
 
 	// Register a placement so the Router knows local hosts this model.
 	if err := o.Store.Placements().Upsert(ctx, store.Placement{
