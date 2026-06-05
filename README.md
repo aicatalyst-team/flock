@@ -190,6 +190,8 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 4. **Heterogeneous is invisible.** Mac, NVIDIA, AMD — the user picks models, not hardware.
 5. **OpenAI- and Anthropic-compatible from day one.** Same endpoint serves both protocols.
 6. **Permissive open source.** Apache 2.0. No open-core gotchas.
+7. **The CLI is the source of truth.** Every user-facing capability ships as a `flock` CLI command first. The web UI is a thin wrapper — it invokes the same Go functions the CLI invokes, never reimplements logic. If you can do it in the UI, you can do it in CI / scripts / SSH sessions, and vice versa.
+8. **Adding or switching a model is one action.** No hand-written YAML, no manual GGUF downloads, no separate worker-side setup. `flock model add hf:owner/repo` does the rest — picks engine, picks quant, shards if needed, distributes weights, warms the model. `flock default <id>` switches the default with zero downtime.
 
 ---
 

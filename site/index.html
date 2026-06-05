@@ -259,6 +259,28 @@ $ flock up          <span class="text-slate-500"># starts your private LLM gatew
           </div>
         </div>
 
+        <div class="mt-10 grid md:grid-cols-2 gap-6">
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <div class="w-10 h-10 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center text-xl">🔁</div>
+            <h3 class="mt-4 font-semibold text-lg">Switching models is one action</h3>
+            <p class="mt-2 text-slate-600 text-sm leading-relaxed">
+              <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock model add &lt;id&gt;</span> for catalog models.
+              <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock model add hf:owner/repo</span> for anything else on HuggingFace.
+              No hand-written YAML, no manual GGUF downloads, no per-worker setup. Engine, quant, and shard count are picked for you from your hardware
+              (<a href="https://github.com/hadihonarvar/flock/blob/main/TASKS.md#easy-model-switching-track-m4-t16--m4-t20" class="text-emerald-600 hover:text-emerald-700 underline">M4-T16 → M4-T20</a>, landing v0.5).
+            </p>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+            <div class="w-10 h-10 bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center text-xl">⚙️</div>
+            <h3 class="mt-4 font-semibold text-lg">CLI is the source of truth</h3>
+            <p class="mt-2 text-slate-600 text-sm leading-relaxed">
+              Every action in the dashboard is one <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock</span> command underneath.
+              Anything you can do with the UI, you can do with curl, cron, or an SSH session — same audit log, same validation, same outcome.
+              No web-only knobs.
+            </p>
+          </div>
+        </div>
+
         <div class="mt-10 bg-slate-900 text-slate-100 rounded-lg p-6">
           <h3 class="font-semibold text-lg">The honest one-line pitch</h3>
           <p class="mt-2 text-slate-300 leading-relaxed">

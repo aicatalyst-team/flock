@@ -303,6 +303,46 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 - **Model registry** — what models exist (catalog), where they live (placement), what state they're in
 - **Model puller** — download weights from HF/MinIO with resume
 
+### CLI / Admin API / Web UI contract
+
+This is a load-bearing architectural rule, not a style preference:
+
+**The `flock` CLI is the canonical control surface.** Every user-facing mutation — `flock model add`, `flock model remove`, `flock default <id>`, `flock shard create`, `flock node drain`, `flock token create`, etc. — is implemented as an exported Go function in `internal/control/`. The CLI command in `cmd/flock/` is a thin arg-parser that calls this function. The admin HTTP endpoint that backs the same action in the web UI is a thin request-decoder that calls the **same** function.
+
+```
+   ┌──────────────┐         ┌──────────────┐
+   │   CLI cmd    │         │  Web UI POST │
+   │   (cmd/flock)│         │  (internal/  │
+   │              │         │   ui/*.html) │
+   └──────┬───────┘         └──────┬───────┘
+          │                        │
+          ▼                        ▼
+   ┌──────────────┐         ┌──────────────┐
+   │ arg-parsing  │         │ req-decoding │
+   │ + flag       │         │ + auth       │
+   │ resolution   │         │ check        │
+   └──────┬───────┘         └──────┬───────┘
+          │                        │
+          └────────────┬───────────┘
+                       ▼
+            ┌────────────────────┐
+            │ internal/control/  │  ◄── one place mutating logic lives
+            │  ModelAdd()        │
+            │  ModelRemove()     │
+            │  SetDefault()      │
+            │  ShardCreate()     │
+            │  …                 │
+            └────────────────────┘
+```
+
+**Why this matters:**
+- Anything you can do in the dashboard, you can do in a script. Anything you can do in a script, the dashboard can do.
+- Behavior is identical across surfaces — the same audit log entry, the same validation, the same error messages.
+- A web UI bug can't drift from CLI behavior (or vice versa) because there's only one implementation.
+- New capabilities ship CLI-first (with `--help`), and the UI follows. This forces the developer to think about scriptability and headless operation before pixel-pushing.
+
+See **M4-T20** in TASKS.md for the refactor that codifies this. After M4-T20 lands, `internal/api/admin_*.go` contains no mutating logic — only request decoding and a call into `internal/control/`.
+
 ---
 
 ## Agent internals

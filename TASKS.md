@@ -665,6 +665,47 @@ Goal: launch publicly. Quality bar high enough to keep stars and adopt PRs.
 
 ---
 
+### Easy-model-switching track (M4-T16 → M4-T20)
+
+These five tasks together implement the **"adding or switching a model is one action"** product principle. Each step in today's "add a new model" flow that requires a human decision becomes a Flock decision with a CLI override flag. The web UI never reimplements logic — it invokes the CLI commands these tasks define.
+
+### M4-T16 — Auto-YAML from HuggingFace model card
+
+- Owner: BE · Effort: M (2d) · Depends on: M1-T12
+- Files: `internal/catalog/hf_resolver.go`, `cmd/flock/cmd_model.go`
+- Acceptance: `flock model add hf:<owner>/<repo>` (no other args) inspects the HF model card via the HF API (or local cache), reads `architectures`, `parameters`, file list (GGUF/AWQ/safetensors variants), and writes a working catalog entry to `~/.flock/catalog/<id>.yaml` automatically. Fields populated: `id`, `display_name`, `source`, `size_bytes`, `quant`, `context_window`, `capabilities` (from `pipeline_tag`), `recommended_engines` (from architecture rules), `hardware.min_ram_gb` (from params × bytes-per-param-at-quant). The generated YAML is identical in shape to a hand-written one — `flock model add <id>` works against it the next time. Override flags `--engine`, `--quant`, `--id` respected.
+
+### M4-T17 — Hardware-aware engine + quant selection
+
+- Owner: BE · Effort: M (1–2d) · Depends on: M4-T16, M1-T09 (hardware detect)
+- Files: `internal/catalog/picker.go`, `internal/hwdetect/`
+- Acceptance: Given a model size in params and the current node's detected hardware (CPU vendor, GPU vendor, total VRAM, total RAM), Flock picks an engine and quant according to a documented rule table:
+  - Apple Silicon + model fits in unified memory → MLX-LM (Q4 default, Q5/Q8 if RAM allows)
+  - NVIDIA + ≥16 GB VRAM → vLLM (AWQ if available, else Q4_K_M GGUF)
+  - Anything else / fallback → Ollama (Q4_K_M)
+  - Model size > one node's RAM → llama.cpp-RPC with sharding (delegates to M5-T11)
+  The picker's choice is logged at INFO; user can override with `--engine` and `--quant`. Picker also rejects impossible combos (e.g. MLX on Linux) with a clear error.
+
+### M4-T18 — `flock default <id>` with pre-warming
+
+- Owner: BE · Effort: S (1d) · Depends on: M2-T08 (placements)
+- Files: `cmd/flock/cmd_default.go` (new), `internal/scheduler/warmup.go`
+- Acceptance: New CLI command `flock default <id>` replaces the current "edit config + restart" flow. It (1) pre-loads the target model on the best-fit worker, (2) waits for first inference to confirm the model is hot, (3) atomically updates the default-model pointer, (4) returns. `flock default` (no arg) prints the current default. Zero downtime: requests for the old default keep working until the new one is hot. Logged in audit.
+
+### M4-T19 — Web UI: Add Model search + progress (invokes CLI)
+
+- Owner: BE/UI · Effort: M (2d) · Depends on: M4-T16, M4-T17, M4-T20
+- Files: `internal/ui/index.html`, `internal/api/admin_models.go`
+- Acceptance: The Models tab gets an **Add** button that opens a search box with HF model-card autocomplete (typeahead via the public HF API, no API key). Selecting a result POSTs to an admin endpoint that internally invokes the same code path as `flock model add hf:<repo>` (no reimplementation — see M4-T20). Progress bar shows GGUF download bytes + per-worker distribution. ETA visible. Cancel button. On completion the new model appears in the catalog list with status `ready`.
+
+### M4-T20 — Refactor: admin API wraps CLI command paths
+
+- Owner: BE · Effort: M (1–2d) · Depends on: —
+- Files: `internal/api/admin_*.go`, `internal/control/cli.go` (new shared package)
+- Acceptance: Every admin HTTP endpoint that mutates state (add model, remove model, set default, create shard, drain node, create/revoke token) is refactored to invoke the same exported Go function the CLI command in `cmd/flock/` uses. New shared package `internal/control/` holds these functions. CLI code in `cmd/flock/` becomes a thin arg-parsing layer. **No mutating logic lives in `internal/api/` after this lands.** Unit tests confirm: for each affected action, calling the CLI and calling the HTTP endpoint produce identical store state. Documents the rule in `ARCHITECTURE.md`.
+
+---
+
 ## Milestone 5 — v1.0 production
 
 Goal: production-grade for orgs running this in serious environments.
@@ -787,5 +828,6 @@ A task is done when **all** of these are true:
 - [ ] No new `golangci-lint` warnings
 - [ ] CI green
 - [ ] Task checkbox flipped in `TASKS.md`
+- [ ] **If the task adds a user-facing capability**: it ships as a `flock` CLI command first, with `--help` text. Any web UI for the same capability is a thin wrapper that POSTs to an admin endpoint, which in turn invokes the **same Go function the CLI invokes**. No mutating logic lives in the admin API layer. (See [M4-T20](#m4-t20--refactor-admin-api-wraps-cli-command-paths) for the canonical implementation pattern.)
 
 A milestone is done when **all** tasks are checked **and** a recorded demo (asciinema or video) shows the milestone's headline capability working end-to-end.
