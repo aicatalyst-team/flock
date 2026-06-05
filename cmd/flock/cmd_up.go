@@ -241,18 +241,35 @@ func printReady(cfg *config.Config, adminKey string) {
 	fmt.Println()
 	fmt.Println("  Flock is ready.")
 	fmt.Println()
-	fmt.Printf("  API:    %s/v1\n", base)
-	fmt.Printf("  Health: %s/healthz\n", base)
+	fmt.Printf("  Dashboard:  %s\n", base)
+	fmt.Printf("  API:        %s/v1\n", base)
+	fmt.Printf("  Health:     %s/healthz\n", base)
 	if adminKey != "" {
+		// First run: a brand-new admin key was generated. Walk the operator
+		// through every next step so they don't have to dig through README.
 		fmt.Println()
 		fmt.Println("  Admin API key (shown once — store it now):")
 		fmt.Printf("    %s\n", adminKey)
 		fmt.Println()
-		fmt.Println("  Try it:")
+		fmt.Println("  Next steps:")
+		fmt.Printf("    →  Test in the browser:  %s\n", base)
+		fmt.Println("    →  Wire up Claude Code:  flock connect claude-code")
+		fmt.Println("    →  Wire up Cursor:       flock connect cursor")
+		fmt.Println("    →  See all clients:      flock connect --list")
+		fmt.Println("    →  Invite a teammate:    flock invite <name>     # coming soon (M3-T21)")
+		fmt.Println()
+		fmt.Println("  Quick test from the shell:")
 		fmt.Printf("    curl %s/v1/chat/completions \\\n", base)
 		fmt.Printf("      -H 'Authorization: Bearer %s' \\\n", adminKey)
 		fmt.Println(`      -H 'Content-Type: application/json' \`)
 		fmt.Printf("      -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'\n", cfg.Router.DefaultModel)
+	} else {
+		// Returning user: admin key already on disk, no need to repeat it
+		// or the quick-test curl. Just nudge them at the dashboard.
+		fmt.Println()
+		fmt.Println("  Wire up a tool:")
+		fmt.Println("    flock connect claude-code   # or: cursor, aider, continue, …")
+		fmt.Println("    flock connect --list        # see all supported clients")
 	}
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")

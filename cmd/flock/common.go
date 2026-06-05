@@ -99,6 +99,85 @@ func readLocalAdminKey(cfg *config.Config) string {
 	return strings.TrimSpace(string(data))
 }
 
+// resolveToken returns the API key to use for client commands, in this
+// priority order:
+//  1. explicit override (--token flag value passed in)
+//  2. FLOCK_TOKEN env var
+//  3. saved admin key file (~/.flock/admin.key, written by `flock up`)
+//
+// Returns "" if none are set. Per user preference: env var wins over the
+// file, so an operator can scope a command to a different token without
+// editing the file.
+func resolveToken(cfg *config.Config, override string) string {
+	if override != "" {
+		return override
+	}
+	if v := strings.TrimSpace(os.Getenv("FLOCK_TOKEN")); v != "" {
+		return v
+	}
+	return readLocalAdminKey(cfg)
+}
+
+// reorderFlagsFirst rewrites args so that any flags (and their values)
+// come before any positional arguments. Go's stdlib `flag` package stops
+// parsing at the first non-flag arg, which makes invocations like
+// `flock connect cursor --model X` silently drop the trailing flags.
+// This helper makes both orderings work without pulling in a third-party
+// flag library.
+//
+// valueFlags is the set of flag names (with leading dashes) that take a
+// value (--foo VALUE form). Boolean flags should not be listed here.
+func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		// `--` ends flag parsing; pass through verbatim.
+		if a == "--" {
+			flags = append(flags, args[i:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+			// --flag=value form: value is in the same token, no extra slot.
+			if strings.Contains(a, "=") {
+				continue
+			}
+			// --flag value form: also pick up the next token, if this flag
+			// is known to take a value.
+			if valueFlags[a] && i+1 < len(args) {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		} else {
+			positionals = append(positionals, a)
+		}
+	}
+	return append(flags, positionals...)
+}
+
+// resolveBaseURL returns the URL clients should point at, in this order:
+//  1. explicit override (--base-url flag)
+//  2. FLOCK_BASE_URL env var
+//  3. cfg.ExternalURL (if the operator set one in config)
+//  4. http://localhost + cfg.Listen
+func resolveBaseURL(cfg *config.Config, override string) string {
+	if override != "" {
+		return strings.TrimRight(override, "/")
+	}
+	if v := strings.TrimSpace(os.Getenv("FLOCK_BASE_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	if cfg.ExternalURL != "" {
+		return strings.TrimRight(cfg.ExternalURL, "/")
+	}
+	listen := cfg.Listen
+	if listen == "" {
+		listen = ":8080"
+	}
+	return "http://localhost" + listen
+}
+
 // adminCall makes an authenticated HTTP request to the local leader's admin
 // API. Returns the response body bytes. If the leader isn't running this
 // returns a clear error rather than a confusing dial failure.

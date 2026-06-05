@@ -448,6 +448,12 @@ Goal: real cluster. `flock join` works across two machines. Anthropic API surfac
 - Files: `docs/demo/m2.cast`
 - Acceptance: 90-second recording: install on machine 1 → install + join on machine 2 → both nodes show in UI → Claude Code calls local Qwen3-Coder via Flock.
 
+### M2-T21 — Fix router `getOrCreateRemote` race condition
+
+- Owner: BE · Effort: S (½d) · Depends on: —
+- Files: `internal/router/router.go` (around lines 218–236)
+- Acceptance: TOCTOU window in `getOrCreateRemote()` closed — currently RLock is released between cache-miss check and engine construction, so two concurrent requests for the same node can each construct their own remote engine and one is dropped on the floor. Fix with either (a) hold the write Lock throughout construction, or (b) use a `sync.Map` with `LoadOrStore`, or (c) a per-nodeID `sync.Once`. Add a unit test that spawns N goroutines hitting the same nodeID and asserts `engines.NewWithAuth` is called exactly once. Found by code review on 2026-06-05.
+
 ---
 
 ## Milestone 3 — Multi-tenant + observability (Weeks 9–12)

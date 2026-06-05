@@ -47,6 +47,8 @@ func main() {
 		cmdConfig(args)
 	case "doctor":
 		cmdDoctor(args)
+	case "connect":
+		cmdConnect(args)
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -87,6 +89,8 @@ Commands:
   config show              Show effective runtime config (secrets redacted)
   config path              Print config file path
   config edit              Print the editor command to edit config
+  connect <client>         Print copy-paste config for a tool (Claude Code, Cursor, …)
+  connect --list           List supported clients
   doctor                   Diagnose common problems
   version                  Print version
   help                     Show this help
