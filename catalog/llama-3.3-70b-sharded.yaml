@@ -1,0 +1,32 @@
+# Example sharded model entry. Llama 3.3 70B Q4_K_M is ~40 GB which won't
+# fit on a single 24 GB Mac Mini — the sharding spec tells Flock to split it
+# across multiple workers via llama.cpp RPC.
+#
+# Prereqs to actually serve this model:
+#   1. Download the GGUF to source.path on the leader.
+#   2. brew install llama.cpp on every node (provides llama-server +
+#      rpc-server; rpc-server is currently only in source builds — see
+#      https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc).
+#   3. At least N workers joined and ready (N = default_shards or --shards).
+#
+# Then: `flock model add llama-3.3-70b-sharded`
+# or:   `flock shard create llama-3.3-70b-sharded 2`
+id: llama-3.3-70b-sharded
+display_name: Llama 3.3 70B (sharded, manual GGUF)
+source:
+  type: file
+  path: /var/lib/flock/models/llama-3.3-70b-q4_k_m.gguf
+size_bytes: 42949672960
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 48      # combined across shards
+tags: [sharded, large]
+sharding:
+  required: true
+  default_shards: 2
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

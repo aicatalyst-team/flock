@@ -18,6 +18,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/router"
+	"github.com/hadihonarvar/flock/internal/scheduler"
 	"github.com/hadihonarvar/flock/internal/store"
 	"github.com/hadihonarvar/flock/internal/ui"
 
@@ -35,16 +36,14 @@ type Server struct {
 	log    *slog.Logger
 	http   *http.Server
 
+	router     *router.Router
+	orch       *scheduler.Orchestrator
 	openaiH    *api.Handler
 	anthropicH *api.AnthropicHandler
 	egressH    *api.EgressHandler
 }
 
-func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger) *Server {
-	// Wrap the local engine in a Router so requests can be dispatched to
-	// worker nodes when the local engine doesn't have the requested model
-	// (or when a worker is less loaded). For single-node deployments the
-	// Router transparently delegates everything to the local engine.
+func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger, orch *scheduler.Orchestrator) *Server {
 	routed := router.New(eng, st)
 	openaiH := &api.Handler{
 		Engine:  routed,
@@ -68,6 +67,8 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		engine:     eng,
 		cat:        cat,
 		log:        log,
+		router:     routed,
+		orch:       orch,
 		openaiH:    openaiH,
 		anthropicH: anthropicH,
 		egressH:    egressH,
@@ -154,6 +155,9 @@ func (s *Server) routes() http.Handler {
 			r.Get("/models", s.listInstalledModels)
 			r.Get("/usage/recent", s.listUsageRecent)
 			r.Get("/audit/recent", s.listAuditRecent)
+			r.Get("/shards", s.listShards)
+			r.Post("/shards/create", s.createShards)
+			r.Delete("/shards/{model_id}", s.deleteShards)
 		})
 	})
 
@@ -327,6 +331,62 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ---- shard endpoints ----
+
+func (s *Server) listShards(w http.ResponseWriter, r *http.Request) {
+	shs, err := s.store.Shards().List(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, shs)
+}
+
+func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		ModelID string `json:"model_id"`
+		Shards  int    `json:"shards"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	entry := models.FindByID(s.cat, req.ModelID)
+	if entry == nil {
+		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ModelID)
+		return
+	}
+	if s.orch == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
+		return
+	}
+	if err := s.orch.CreateSharded(r.Context(), *entry, req.Shards); err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.router.InvalidateModel(req.ModelID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "model_id": req.ModelID})
+}
+
+func (s *Server) deleteShards(w http.ResponseWriter, r *http.Request) {
+	modelID := chi.URLParam(r, "model_id")
+	if modelID == "" {
+		writeJSONError(w, http.StatusBadRequest, "model_id required")
+		return
+	}
+	if s.orch == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
+		return
+	}
+	if err := s.orch.RemoveSharded(r.Context(), modelID); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.router.InvalidateModel(modelID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "model_id": modelID})
 }
 
 // extractBearer pulls the token out of the Authorization header (Bearer

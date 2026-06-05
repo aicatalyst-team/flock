@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/engines"
@@ -78,6 +82,63 @@ func newEngineFromConfig(cfg *config.Config) engines.Engine {
 
 func pidFilePath(cfg *config.Config) string {
 	return filepath.Join(cfg.DataDir, "flock.pid")
+}
+
+// localAdminKeyPath is where bootstrapAdminKey persists the admin key so
+// subsequent CLI invocations on this host can authenticate to the leader.
+func localAdminKeyPath(cfg *config.Config) string {
+	return filepath.Join(cfg.DataDir, "admin.key")
+}
+
+// readLocalAdminKey returns the saved admin key, or "" if missing.
+func readLocalAdminKey(cfg *config.Config) string {
+	data, err := os.ReadFile(localAdminKeyPath(cfg))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// adminCall makes an authenticated HTTP request to the local leader's admin
+// API. Returns the response body bytes. If the leader isn't running this
+// returns a clear error rather than a confusing dial failure.
+func adminCall(ctx context.Context, cfg *config.Config, method, path string, body []byte) ([]byte, error) {
+	key := readLocalAdminKey(cfg)
+	if key == "" {
+		return nil, fmt.Errorf("no admin key on disk at %s — is `flock up` running on this host?", localAdminKeyPath(cfg))
+	}
+	listen := cfg.Listen
+	if listen == "" {
+		listen = ":8080"
+	}
+	url := "http://localhost" + listen + path
+	var reader *bytes.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	var req *http.Request
+	var err error
+	if reader != nil {
+		req, err = http.NewRequestWithContext(ctx, method, url, reader)
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, url, http.NoBody)
+	}
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("admin call: %w (is flock up running?)", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return respBody, fmt.Errorf("%s %s: %s", method, path, resp.Status)
+	}
+	return respBody, nil
 }
 
 func writePID(cfg *config.Config) error {

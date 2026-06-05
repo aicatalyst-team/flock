@@ -117,6 +117,13 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		return r.local, r.localNode, nil
 	}
 
+	// 0. Is this a SHARDED model? If yes, route to its coordinator (always
+	//    local in v0.4) via a llamacpp engine. The coordinator handles the
+	//    fan-out to rpc-server backends on workers internally.
+	if eng, ok := r.shardCoordinator(ctx, model); ok {
+		return eng, "shard:" + model, nil
+	}
+
 	// 1. Is the model on the local node?
 	localHas, _ := r.modelOnNode(ctx, r.localNode, model)
 	if localHas {
@@ -157,6 +164,40 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 
 	eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
 	return eng, node.ID, nil
+}
+
+// shardCoordinator returns the llamacpp engine pointing at the coordinator
+// of a sharded model, or (nil, false) if the model isn't sharded.
+func (r *Router) shardCoordinator(ctx context.Context, modelID string) (engines.Engine, bool) {
+	cacheKey := "shard:" + modelID
+	r.mu.RLock()
+	if eng, ok := r.remotes[cacheKey]; ok {
+		r.mu.RUnlock()
+		return eng, true
+	}
+	r.mu.RUnlock()
+	shards, err := r.store.Shards().GetByModel(ctx, modelID)
+	if err != nil || len(shards) == 0 {
+		return nil, false
+	}
+	for _, s := range shards {
+		if s.Role == "coordinator" && s.Status == "ready" {
+			eng := engines.NewLlamaCppRPC("http://" + s.Address)
+			r.mu.Lock()
+			r.remotes[cacheKey] = eng
+			r.mu.Unlock()
+			return eng, true
+		}
+	}
+	return nil, false
+}
+
+// InvalidateModel drops any cached engine for the given model. Called by
+// the orchestrator when shards are torn down so the next request rebuilds.
+func (r *Router) InvalidateModel(modelID string) {
+	r.mu.Lock()
+	delete(r.remotes, "shard:"+modelID)
+	r.mu.Unlock()
 }
 
 func (r *Router) modelOnNode(ctx context.Context, nodeID, modelID string) (bool, error) {

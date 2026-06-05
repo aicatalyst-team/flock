@@ -15,6 +15,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/controlplane"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
+	"github.com/hadihonarvar/flock/internal/scheduler"
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
@@ -41,7 +42,7 @@ func cmdUp(args []string) {
 	defer st.Close()
 
 	// 4. Bootstrap admin key on first run
-	plainKey := bootstrapAdminKey(st)
+	plainKey := bootstrapAdminKey(st, cfg)
 
 	// 5. Catalog + auto-pick default model
 	cat := loadCatalogOrExit(cfg)
@@ -95,8 +96,14 @@ func cmdUp(args []string) {
 	// 8. Print ready block
 	printReady(cfg, plainKey)
 
-	// 9. Start server with signal context
-	srv := controlplane.NewServer(cfg, st, eng, cat, log)
+	// 9. Process supervisor + sharding orchestrator (leader runs coordinator
+	//    llama-server processes locally for sharded models).
+	sup := agent.NewSupervisor(log)
+	defer sup.StopAll()
+	orch := scheduler.New(st, sup, log)
+
+	// 10. Start server with signal context
+	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -106,13 +113,10 @@ func cmdUp(args []string) {
 	ok(os.Stdout, "shutdown complete")
 }
 
-func bootstrapAdminKey(st store.Store) string {
+func bootstrapAdminKey(st store.Store, cfg *config.Config) string {
 	ctx := context.Background()
 	keys, err := st.APIKeys().List(ctx)
 	if err != nil {
-		// Treat this as fatal-for-bootstrap: we cannot safely decide whether
-		// keys already exist. Refusing to mint avoids producing duplicate
-		// admin credentials on every flaky startup.
 		warn(os.Stdout, "could not list api keys (%v) — skipping bootstrap; check `flock token ls`", err)
 		return ""
 	}
@@ -127,6 +131,13 @@ func bootstrapAdminKey(st store.Store) string {
 	if err := st.APIKeys().Create(ctx, rec); err != nil {
 		warn(os.Stdout, "could not persist admin key: %v", err)
 		return ""
+	}
+	// Save plaintext to ~/.flock/admin.key (mode 0600) so subsequent CLI
+	// invocations on this host can authenticate to the leader without the
+	// user having to remember the key. Same trust model as ~/.aws/credentials.
+	path := localAdminKeyPath(cfg)
+	if err := os.WriteFile(path, []byte(plain), 0o600); err != nil {
+		warn(os.Stdout, "could not save admin key to %s: %v", path, err)
 	}
 	return plain
 }

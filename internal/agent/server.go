@@ -22,8 +22,9 @@ import (
 
 // Server is the worker's HTTP surface.
 type Server struct {
-	Engine engines.Engine
-	Token  string // shared secret; same value the leader stores in node.worker_token
+	Engine     engines.Engine
+	Token      string // shared secret; same value the leader stores in node.worker_token
+	Supervisor *Supervisor
 
 	http *http.Server
 }
@@ -31,10 +32,17 @@ type Server struct {
 // Start runs the server until ctx is done. Returns the listen error or nil
 // on graceful shutdown.
 func (s *Server) Start(ctx context.Context, listen string) error {
+	if s.Supervisor == nil {
+		s.Supervisor = NewSupervisor(nil)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/v1/models", s.auth(s.listModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.chatCompletions))
+	mux.HandleFunc("/v1/process/start", s.auth(s.processStart))
+	mux.HandleFunc("/v1/process/stop", s.auth(s.processStop))
+	mux.HandleFunc("/v1/process/list", s.auth(s.processList))
+	mux.HandleFunc("/v1/process/logs", s.auth(s.processLogs))
 
 	s.http = &http.Server{
 		Addr:              listen,
@@ -224,6 +232,71 @@ func writeSSE(w http.ResponseWriter, r *http.Request, stream <-chan engines.Stre
 				}},
 			})
 		}
+	}
+}
+
+// ---- process management endpoints ----
+//
+// Used by the leader's sharding orchestrator to launch rpc-server (and
+// other helper processes) on workers without SSH. All endpoints are
+// token-auth'd via the auth middleware.
+
+func (s *Server) processStart(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var spec ProcessSpec
+	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := s.Supervisor.Start(r.Context(), spec)
+	if err != nil {
+		// Return 502 with the info so the caller knows the PID + reason
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": err.Error(),
+			"info":  info,
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(info)
+}
+
+func (s *Server) processStop(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if err := s.Supervisor.Stop(req.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) processList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.Supervisor.List())
+}
+
+func (s *Server) processLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id query param required", http.StatusBadRequest)
+		return
+	}
+	n := 100
+	if v := r.URL.Query().Get("lines"); v != "" {
+		fmt.Sscanf(v, "%d", &n)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	for _, line := range s.Supervisor.Logs(id, n) {
+		_, _ = io.WriteString(w, line+"\n")
 	}
 }
 

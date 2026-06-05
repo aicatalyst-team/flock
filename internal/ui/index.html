@@ -35,6 +35,7 @@
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="dashboard">Dashboard</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="nodes">Nodes</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="models">Models</button>
+        <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="shards">Shards</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="tokens">Tokens</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="usage">Usage</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="audit">Audit</button>
@@ -58,6 +59,7 @@
       <div id="view-dashboard" class="view space-y-6"></div>
       <div id="view-nodes" class="view hidden"></div>
       <div id="view-models" class="view hidden"></div>
+      <div id="view-shards" class="view hidden"></div>
       <div id="view-tokens" class="view hidden"></div>
       <div id="view-usage" class="view hidden"></div>
       <div id="view-audit" class="view hidden"></div>
@@ -138,6 +140,7 @@ function switchView(v) {
     dashboard: renderDashboard,
     nodes: renderNodes,
     models: renderModels,
+    shards: renderShards,
     tokens: renderTokens,
     usage: renderUsage,
     audit: renderAudit,
@@ -233,6 +236,114 @@ async function renderModels() {
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
+}
+
+async function renderShards() {
+  const root = $("#view-shards");
+  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  try {
+    const shards = (await api("/admin/v1/shards")) || [];
+    // Group by model for readability
+    const groups = {};
+    for (const s of shards) {
+      (groups[s.ModelID] ||= []).push(s);
+    }
+    const groupNames = Object.keys(groups).sort();
+    const groupHTML = groupNames.length === 0
+      ? `<div class="bg-white border border-slate-200 rounded p-6 text-center text-slate-500">no sharded models yet — create one below</div>`
+      : groupNames.map((mid) => {
+          const rows = groups[mid].map((s) => [
+            roleBadge(s.Role),
+            `<span class="code">${s.NodeID}</span>`,
+            `<span class="code">${s.Address}</span>`,
+            stateBadge(s.Status),
+            new Date(s.LastSeen).toLocaleString(),
+            `<button class="text-red-600 hover:underline text-xs" onclick="removeSharded('${mid}')">remove model</button>`,
+          ]);
+          return `
+            <div class="bg-white border border-slate-200 rounded">
+              <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <div class="font-semibold text-slate-900">${mid}</div>
+                  <div class="text-xs text-slate-500">${groups[mid].length} shard${groups[mid].length === 1 ? '' : 's'}</div>
+                </div>
+                <button class="text-red-600 hover:underline text-sm" onclick="removeSharded('${mid}')">Tear down</button>
+              </div>
+              ${table(["Role", "Node", "Address", "Status", "Last seen", ""], rows)}
+            </div>`;
+        }).join("");
+
+    root.innerHTML = `
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <h2 class="text-lg font-semibold">Sharded models</h2>
+          <p class="text-xs text-slate-500 mt-1">One model split across multiple nodes via llama.cpp RPC. The coordinator runs on the leader; rpc-server runs on each shard host.</p>
+        </div>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded p-4 mb-4">
+        <div class="text-sm font-semibold mb-2">Create new sharded model</div>
+        <div class="flex gap-2 flex-wrap items-end">
+          <div class="flex-1 min-w-[180px]">
+            <label class="text-xs text-slate-500">Catalog model id</label>
+            <input id="shardModel" type="text" placeholder="e.g. llama-3.3-70b" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+          </div>
+          <div class="w-24">
+            <label class="text-xs text-slate-500">Shards</label>
+            <input id="shardCount" type="number" value="2" min="2" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+          <button id="shardCreateBtn" onclick="createSharded()" class="bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-medium hover:bg-slate-800">Create</button>
+        </div>
+        <p id="shardErr" class="hidden mt-2 text-sm text-red-600"></p>
+        <p id="shardOk" class="hidden mt-2 text-sm text-green-700"></p>
+      </div>
+
+      <div class="space-y-4">${groupHTML}</div>
+
+      <div class="mt-6 bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
+        <strong>Prereqs:</strong> The leader must have <span class="code">llama-server</span> installed (from <span class="code">brew install llama.cpp</span>), each worker must have <span class="code">rpc-server</span> on PATH, and the catalog entry needs <span class="code">sharding.required: true</span> plus a local GGUF path in <span class="code">source.path</span>.
+      </div>`;
+  } catch (e) {
+    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+async function createSharded() {
+  const model = $("#shardModel").value.trim();
+  const shards = parseInt($("#shardCount").value, 10) || 2;
+  $("#shardErr").classList.add("hidden");
+  $("#shardOk").classList.add("hidden");
+  $("#shardCreateBtn").disabled = true;
+  $("#shardCreateBtn").textContent = "Creating…";
+  try {
+    await api("/admin/v1/shards/create", {
+      method: "POST",
+      body: JSON.stringify({ model_id: model, shards }),
+    });
+    $("#shardOk").textContent = `Created ${model} with ${shards} shard(s)`;
+    $("#shardOk").classList.remove("hidden");
+    await renderShards();
+  } catch (e) {
+    $("#shardErr").textContent = e.message;
+    $("#shardErr").classList.remove("hidden");
+    $("#shardCreateBtn").disabled = false;
+    $("#shardCreateBtn").textContent = "Create";
+  }
+}
+
+async function removeSharded(modelID) {
+  if (!confirm(`Tear down sharded model ${modelID}? This stops the coordinator and every rpc-server worker.`)) return;
+  try {
+    await api(`/admin/v1/shards/${encodeURIComponent(modelID)}`, { method: "DELETE" });
+    await renderShards();
+  } catch (e) {
+    alert(`Remove failed: ${e.message}`);
+  }
+}
+
+function roleBadge(r) {
+  const cls = r === "coordinator" ? "pill-info" : "pill-ok";
+  return `<span class="pill ${cls}">${r}</span>`;
 }
 
 async function renderTokens() {

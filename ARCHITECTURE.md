@@ -196,15 +196,60 @@ CREATE INDEX idx_placements_model ON model_placements(model_id);
 
 Worker heartbeats carry `loaded_models`; the leader calls `PlacementStore.ReplaceForNode(nodeID, …)` to reconcile atomically every 5s. Local placements (`node_id="local"`) are populated by `cmd_model.go` on add and by `cmd_up.go` on startup (it lists the leader's local engine).
 
-### Sharding (`internal/engines/llamacpp_rpc.go`)
+### Sharding auto-orchestration (v0.4)
 
-For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets the model be split across multiple nodes. v0.3 ships:
+For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets the model be split across multiple nodes. **v0.4 automates the entire orchestration** — no SSHing into workers, no managing rpc-server processes by hand.
 
-- ✅ A `llamacpp` engine driver that talks OpenAI-compat to a `llama-server` already configured with `--rpc <backend list>`
-- ❌ Automatic launch of `rpc-server` processes on workers (the user does this manually for v0.3)
-- ❌ Automatic shard placement decisions (the scheduler doesn't yet know "this model wants N shards")
+#### Components
 
-The driver file's header comment documents the manual workflow. v0.4 will add a Scheduler that promotes a `sharded: true` catalog entry into auto-launched `rpc-server` processes on workers + a `llama-server` on the coordinator.
+| File | Role |
+|---|---|
+| `internal/agent/supervisor.go` | Process supervisor used on both leader and workers. Start/Stop/Logs with a TCP readiness probe. |
+| `internal/agent/server.go` | Worker exposes `POST /v1/process/start`, `/stop`, `/list`, `/logs` — token-auth'd, calls into the supervisor. |
+| `internal/scheduler/sharding.go` | Leader-side `Orchestrator.CreateSharded` / `RemoveSharded`. Picks workers, calls their process endpoints, launches the coordinator locally, persists shard rows. |
+| `internal/engines/llamacpp_rpc.go` | Driver that talks OpenAI-compat to a `llama-server` (the coordinator). Same shape as vLLM/MLX. |
+| `internal/router/router.go` | `shardCoordinator()` short-circuits the normal placement lookup when a sharded model is requested — points the request at the coordinator's address. |
+
+#### Flow: `flock shard create llama-3.3-70b-sharded 2`
+
+```
+  CLI → POST /admin/v1/shards/create on the leader
+            │
+            ▼
+   Orchestrator.CreateSharded(entry, 2):
+       │
+       ├─ pickWorkers(2) — ready nodes, descending RAM
+       │
+       ├─ for each worker i:
+       │     spec = { id, command: "rpc-server", args: ["-p", port],
+       │              healthPort: port }
+       │     POST <worker>/v1/process/start
+       │     (worker supervisor launches rpc-server,
+       │      waits for TCP readiness on port, returns PID)
+       │     persist Shard{role:"rpc", node_id:<worker>, address:<worker>:<port>}
+       │
+       ├─ leader.Supervisor.Start("llama-server",
+       │     args: ["-m", <gguf>, "--rpc", "w1:port,w2:port", "--port", 9001])
+       │   wait for TCP readiness on 9001
+       │   persist Shard{role:"coordinator", node_id:"local", address:"127.0.0.1:9001"}
+       │
+       └─ Placement{node_id:"local", model_id:<id>, status:"ready"}
+
+   Now the Router sees this placement; when a client requests the model,
+   shardCoordinator() returns a llamacpp engine pointing at 127.0.0.1:9001.
+```
+
+#### Failure handling
+
+- If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the CLI/UI.
+- If a shard process crashes *after* CreateSharded returns, v0.4 does nothing — the model becomes unavailable until the admin re-runs the create. v0.5 will add a watcher loop that detects exited shards and restarts them.
+
+#### Out of scope for v0.4
+
+- Coordinator on a worker (always on the leader today).
+- Automatic GGUF download to workers (the GGUF must already be on the leader at `source.path`).
+- Live shard migration / rebalancing.
+- Dynamic shard count change.
 
 ---
 
@@ -718,17 +763,18 @@ flock/
 │
 ├── internal/
 │   ├── controlplane/          # leader HTTP server + admin API
-│   ├── agent/                 # per-node loop AND worker HTTP server (server.go)
+│   ├── agent/                 # per-node loop + worker HTTP server + process supervisor
 │   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
-│   ├── router/                # router.go — model → node dispatch, least-loaded
-│   ├── mesh/                  # mesh.go — LAN backend; tsnet interface for v0.4
+│   ├── router/                # router.go — model → node dispatch, least-loaded, shard coordinator
+│   ├── scheduler/             # sharding.go — orchestrator for sharded model lifecycle
+│   ├── mesh/                  # mesh.go — LAN backend; tsnet interface for v0.5
 │   ├── engines/               # ollama.go, vllm.go, mlx.go, llamacpp_rpc.go
-│   ├── models/                # catalog parser, auto-pick
-│   ├── store/                 # SQLite backend (Postgres v1.0)
+│   ├── models/                # catalog parser (now incl. ShardingSpec), auto-pick
+│   ├── store/                 # SQLite backend (now incl. shards table) (Postgres v1.0)
 │   ├── auth/                  # API keys, scope middleware
 │   ├── config/                # YAML + env loader
 │   ├── metrics/               # Prometheus declarations
-│   └── ui/                    # embed.go + index.html (single embedded page)
+│   └── ui/                    # embed.go + index.html (single embedded page incl. Shards tab)
 │
 ├── web/                       # Next.js UI
 │   ├── package.json

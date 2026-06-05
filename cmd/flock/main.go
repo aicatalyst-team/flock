@@ -35,6 +35,8 @@ func main() {
 		cmdNode(args)
 	case "model":
 		cmdModel(args)
+	case "shard":
+		cmdShard(args)
 	case "token":
 		cmdToken(args)
 	case "doctor":
@@ -67,6 +69,9 @@ Commands:
   model ls                 List installed models
   model search [q]         Search the catalog
   model remove <id>        Uninstall a model
+  shard create <model> [N] Orchestrate a sharded model across N workers
+  shard ls                 List shards
+  shard remove <model>     Tear down a sharded model
   token create [name]      Issue an API key (--admin, --node)
   token ls                 List API keys
   token revoke <id>        Revoke an API key

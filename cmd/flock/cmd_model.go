@@ -46,6 +46,14 @@ func modelAdd(id string) {
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
 	}
+
+	// Sharded model? Hand off to the shard orchestrator on the leader.
+	if entry.Sharding.Required {
+		note(os.Stdout, "%s requires sharding — delegating to `flock shard create`", id)
+		shardCreate(id, 0)
+		return
+	}
+
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	eng := newEngineFromConfig(cfg)

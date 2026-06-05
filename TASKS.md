@@ -11,6 +11,7 @@ For user-facing docs see [README.md](README.md). For design rationale see [ARCHI
 - **M0 — foundations**: ✅ done.
 - **M1 — single-node MVP**: ✅ done. CLI, OpenAI API + streaming, Ollama driver, hardware detect, catalog, install.sh. Web UI shipped as a single embedded HTML page (Tailwind via CDN) rather than the Next.js scaffold originally planned.
 - **M2 — multi-node**: ✅ **routing now ships**. `flock join` registers + starts a worker HTTP server. Heartbeat carries loaded models; leader reconciles placements. **Router** picks node per request (local-preferred, then least-loaded worker). Anthropic adapter live. vLLM + MLX + llama.cpp-RPC drivers ship. Tailscale `tsnet` mesh still deferred — LAN backend ships in v0.3.
+- **M2.5 — sharding auto-orchestration (v0.4)**: ✅ `flock shard create <model> <N>` picks workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, persists shards + placement, Router routes to coordinator. Web UI "Shards" tab provides the same workflow. Failure rollback included.
 - **M3 — multi-tenant + observability**: ✅ done. Per-user keys / scopes / daily quotas / audit log / usage metering / Prometheus metrics / hybrid fallback to Anthropic + OpenAI. OIDC deferred to v0.4.
 - **M4 — polish**: ✅ minimal embedded UI shipped. LoRA / vision / Whisper / live migration deferred to v0.4.
 - **Release tooling**: ✅ CI workflow, GoReleaser config, Homebrew formula, install.sh.
@@ -19,7 +20,9 @@ For user-facing docs see [README.md](README.md). For design rationale see [ARCHI
 ### What's still open
 
 - **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers.
-- **Auto-orchestration of sharding** — driver ships (`llamacpp_rpc.go`), but the user still launches `rpc-server` on workers + `llama-server --rpc <list>` on the coordinator manually. v0.4 scheduler will automate.
+- **Shard crash recovery** — sharding auto-orchestration ships in v0.4, but if a worker's `rpc-server` dies mid-stream, the model goes unavailable until the admin re-runs `flock shard create`. v0.5 should add a watcher that restarts exited shards.
+- **Coordinator on a worker** — today the coordinator (`llama-server`) always runs on the leader. v0.5 should allow it to run on the strongest worker, especially when the leader has weak hardware.
+- **Automatic GGUF distribution** — for sharded models the GGUF must already be on the leader; v0.5 should auto-download from HF or stream from the leader to workers as needed.
 - **OIDC** for the web UI — currently the UI takes a pasted admin key.
 - **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth.
 - **Vision, Whisper, LoRA, live model migration** — all v0.4.

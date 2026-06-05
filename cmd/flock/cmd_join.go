@@ -73,8 +73,11 @@ func cmdJoin(args []string) {
 		Log:               log,
 	}
 
-	// Worker HTTP server — leader will call into here for inference.
-	srv := &agent.Server{Engine: eng, Token: token}
+	// Worker HTTP server — leader will call into here for inference AND
+	// for launching/stopping shard processes (rpc-server etc).
+	sup := agent.NewSupervisor(log)
+	srv := &agent.Server{Engine: eng, Token: token, Supervisor: sup}
+	defer sup.StopAll()
 
 	ok(os.Stdout, "joining cluster at %s as %s", leader, nodeID)
 	note(os.Stdout, "address: %s", addr)

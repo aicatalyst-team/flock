@@ -35,7 +35,8 @@
 - ✅ **Router** picks the right node per request: local-preferred if the model is loaded locally, otherwise least-loaded worker that has the model
 - ✅ **Heartbeat carries loaded models** every 5s; leader reconciles the placements table automatically
 - ✅ Agent handles auth errors gracefully (401 → exit, 404 → re-register, transient → exponential backoff)
-- ✅ Model sharding driver scaffolded (`llamacpp_rpc.go`) — supports manual `rpc-server` + `llama-server --rpc` setup; auto-orchestration is v0.4
+- ✅ **Sharding auto-orchestration** — `flock shard create <model> <N>` picks N workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, registers the placement, and the Router routes requests to the coordinator transparently. Web UI exposes the same in the Shards tab.
+- ✅ Process supervisor (`internal/agent/supervisor.go`) — Start/Stop/Logs with TCP-port readiness probe, used by the leader for the coordinator and by workers for rpc-server.
 - ⚠️ Tailscale `tsnet` mesh backend — interface defined; LAN backend ships in v0.3
 
 ### Multi-tenant + observability
@@ -566,20 +567,49 @@ curl http://<leader-host>:8080/v1/chat/completions \
 # served by the worker, transparently
 ```
 
-If you want to **shard one large model across multiple machines** (v0.3 manual setup; auto-orchestration is v0.4):
+### Sharded models (split one brain across multiple machines)
+
+For a model too large to fit on any single machine, Flock can split it across N workers using `llama.cpp`'s RPC backend. Flock orchestrates the whole thing — no SSHing into each box.
+
+**Prereqs:**
+- `brew install llama.cpp` on the leader (provides `llama-server` for the coordinator).
+- `rpc-server` on PATH on every worker that will host a shard. (At time of writing this binary needs a source build of llama.cpp with `cmake --preset rpc`; the Homebrew bottle doesn't include it yet.)
+- A catalog entry with `sharding.required: true` and `source.path` pointing at a local GGUF file the leader can read (see `catalog/llama-3.3-70b-sharded.yaml`).
+- N workers already joined and `ready` (`flock node ls`).
+
+**One command on the leader:**
 
 ```bash
-# on each worker that will host a shard:
-rpc-server -p 50052
+flock model add llama-3.3-70b-sharded
+# auto-detects sharding.required=true → delegates to `flock shard create`
 
-# on the coordinator (the node that exposes the OpenAI surface):
-llama-server -m /path/to/llama-3.3-70b.Q4_K_M.gguf \
-    --rpc worker1.local:50052,worker2.local:50052 \
-    --gpu-layers 999 --port 8080
-
-# then point Flock at it via engine.preferred=llamacpp + FLOCK_MLX_ENDPOINT
-# (the llamacpp driver speaks OpenAI-compat, same shape as MLX/vLLM)
+# or explicitly:
+flock shard create llama-3.3-70b-sharded 2
 ```
+
+What Flock does:
+
+1. Picks the 2 workers with the most free RAM
+2. Sends `POST /v1/process/start` to each worker → launches `rpc-server -p 50052`
+3. Waits for both rpc-servers to be TCP-reachable (readiness probe)
+4. On the leader, launches `llama-server -m <gguf> --rpc <worker1>:50052,<worker2>:50052 --port 9001`
+5. Waits for the coordinator to be reachable
+6. Persists shard rows + a `placements` row pointing the model at the local coordinator
+7. The Router routes any request for `llama-3.3-70b-sharded` to the coordinator, which fans out to the rpc-server shards internally
+
+**Manage from the CLI or web UI:**
+
+```bash
+flock shard ls                              # show every shard + coordinator
+flock shard remove llama-3.3-70b-sharded    # stops coordinator + every rpc-server, deletes rows
+```
+
+Or open `http://leader:8080` → **Shards** tab → "Create sharded model" form + per-model "Tear down" buttons.
+
+**Caveats (v0.4):**
+- No automatic restart on shard crash — the admin re-runs `flock shard create`.
+- Coordinator always runs on the leader.
+- Worker bin-packing is naive (descending free-RAM); doesn't factor GPU memory or current load.
 
 ### List nodes
 
