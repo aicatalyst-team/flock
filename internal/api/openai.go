@@ -130,7 +130,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if requested == "" || requested == "auto" {
 		requested = h.Default
 	}
-	resolved, err := h.resolveModel(requested)
+	resolved, err := h.ResolveModel(requested)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "model_not_found", err.Error())
 		return
@@ -290,11 +290,11 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 	recordUsage(r.Context(), h.Store, "openai", modelOut, u, time.Since(start), "ok")
 }
 
-// resolveModel maps the OpenAI "model" field to the engine-native identifier.
+// ResolveModel maps the OpenAI "model" field to the engine-native identifier.
 // If the requested ID matches a catalog entry, the engine-specific name
 // (e.g. ollama_name) is returned; otherwise the input is passed through so users
 // can specify raw engine model names directly.
-func (h *Handler) resolveModel(catalogID string) (string, error) {
+func (h *Handler) ResolveModel(catalogID string) (string, error) {
 	if catalogID == "" {
 		return "", fmt.Errorf("no model specified and no default configured")
 	}

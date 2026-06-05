@@ -25,13 +25,29 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req) // body is optional
 
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = s.cfg.Router.DefaultModel
+	catalogID := strings.TrimSpace(req.Model)
+	if catalogID == "" {
+		catalogID = s.cfg.Router.DefaultModel
 	}
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 5
+	}
+
+	// Translate the catalog id (e.g. "llama-3.2-1b") to the engine-native
+	// name (e.g. "llama3.2:1b" for Ollama). The /v1/* endpoints do the
+	// same thing via openaiH.ResolveModel — keep us on the same path so
+	// the healthcheck mirrors real client behaviour.
+	resolved, err := s.openaiH.ResolveModel(catalogID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, healthcheckResult{
+			OK:        false,
+			LatencyMS: 0,
+			Model:     catalogID,
+			Engine:    s.router.Name(),
+			Error:     "resolve model: " + err.Error(),
+		})
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -40,7 +56,7 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	mt := maxTokens // engines.ChatRequest expects *int
 	stream, err := s.router.Chat(ctx, engines.ChatRequest{
-		Model:     model,
+		Model:     resolved,
 		Messages:  []engines.Message{{Role: "user", Content: "ping"}},
 		MaxTokens: &mt,
 		Stream:    false,
@@ -49,7 +65,7 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, healthcheckResult{
 			OK:        false,
 			LatencyMS: time.Since(start).Milliseconds(),
-			Model:     model,
+			Model:     resolved,
 			Engine:    s.router.Name(),
 			Error:     err.Error(),
 		})
@@ -71,7 +87,7 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, healthcheckResult{
 			OK:        false,
 			LatencyMS: latency,
-			Model:     model,
+			Model:     resolved,
 			Engine:    s.router.Name(),
 			Error:     streamErr.Error(),
 		})
@@ -81,7 +97,7 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, healthcheckResult{
 		OK:        true,
 		LatencyMS: latency,
-		Model:     model,
+		Model:     resolved,
 		Engine:    s.router.Name(),
 		Reply:     delta,
 	})

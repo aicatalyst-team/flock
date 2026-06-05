@@ -112,7 +112,7 @@ func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 	if requested == "" {
 		requested = h.Default
 	}
-	resolved, err := h.resolveModel(requested)
+	resolved, err := h.ResolveModel(requested)
 	if err != nil {
 		writeAnthropicError(w, http.StatusNotFound, "not_found_error", err.Error())
 		return
