@@ -362,6 +362,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Supported models
 
+> **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
+
+
+
 Flock ships a curated catalog so users don't have to choose AWQ vs GPTQ vs GGUF. Any HuggingFace repo also works via `flock model add hf:owner/repo`.
 
 ### Chat / agent

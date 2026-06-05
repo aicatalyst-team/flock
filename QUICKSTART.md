@@ -330,6 +330,8 @@ export ANTHROPIC_MODEL=qwen-coder-14b
 claude
 ```
 
+> 📖 **Full step-by-step per-model guide:** [MODELS.md](MODELS.md) — for *every* model in the catalog: system requirements, performance expectations on Mac/Linux, install + use snippets for curl / Cursor / Claude Code / SDKs, when to switch up.
+
 ### Use ANY model Ollama supports (not just the catalog)
 
 The catalog is curated for UX, but Flock will pass through any Ollama model name as-is. Steps:

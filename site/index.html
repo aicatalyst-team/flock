@@ -895,8 +895,30 @@ $ flock up</div>
         </div>
 
         <p class="mt-6 text-sm text-slate-500 text-center">
-          See the <a href="https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md#-use-a-different-model-qwen-llama-deepseek" class="underline">Use a different model</a> section in QUICKSTART for the full guide.
+          For the <strong>complete per-model baby-sit guide</strong> — system requirements, performance per platform, install + use snippets for every client (curl / Cursor / Claude Code / SDKs) — see <a href="https://github.com/hadihonarvar/flock/blob/main/MODELS.md" class="underline font-semibold">MODELS.md</a>.
         </p>
+
+        <div class="mt-10 grid md:grid-cols-3 gap-4">
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-emerald-600 font-semibold mb-2">Start here</div>
+            <div class="font-semibold mb-2">qwen-coder-14b ⭐</div>
+            <p class="text-sm text-slate-600 leading-relaxed">The single best default if you have ≥16 GB RAM. Strong code + agent capability. Works great with Claude Code and Cursor.</p>
+            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add qwen-coder-14b</pre>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-blue-600 font-semibold mb-2">Tight on RAM</div>
+            <div class="font-semibold mb-2">qwen-coder-7b</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Fits an 8 GB MacBook Air. Strong for code completion + short chats. Good Cursor / Continue.dev autocomplete backend.</p>
+            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add qwen-coder-7b</pre>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-purple-600 font-semibold mb-2">Frontier tier</div>
+            <div class="font-semibold mb-2">llama-3.3-70b-sharded</div>
+            <p class="text-sm text-slate-600 leading-relaxed">GPT-4 / Sonnet quality, split across 2+ machines via llama.cpp RPC. For 48+ GB combined memory across the cluster.</p>
+            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock shard create \
+  llama-3.3-70b-sharded 2</pre>
+          </div>
+        </div>
       </div>
     </section>
 
