@@ -1,0 +1,28 @@
+# Build artifacts
+/flock
+/dist/
+
+# Local data
+/data/
+.flock/
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code local state
+.claude/
+
+# Node / UI
+node_modules/
+web/dist/
+web/.next/
+
+# Go test caches
+*.test
+*.out
+coverage.txt

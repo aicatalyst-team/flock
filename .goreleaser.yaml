@@ -1,0 +1,93 @@
+version: 2
+project_name: flock
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: flock
+    main: ./cmd/flock
+    binary: flock
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: default
+    name_template: 'flock-{{ .Os }}-{{ .Arch }}'
+    files:
+      - LICENSE
+      - README.md
+      - ARCHITECTURE.md
+      - SECURITY.md
+      - catalog/*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot'
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: hadihonarvar
+    name: flock
+  draft: false
+  prerelease: auto
+  header: |
+    ## Install
+
+    ```bash
+    curl -fsSL https://get.flock.dev | sh
+    ```
+
+    Or with Homebrew:
+
+    ```bash
+    brew install hadihonarvar/tap/flock
+    ```
+
+brews:
+  - name: flock
+    homepage: 'https://github.com/hadihonarvar/flock'
+    description: 'Orchestrate open-weight LLMs across your machines.'
+    license: Apache-2.0
+    repository:
+      owner: hadihonarvar
+      name: homebrew-tap
+      branch: main
+    install: |
+      bin.install "flock"
+    test: |
+      system "#{bin}/flock", "version"

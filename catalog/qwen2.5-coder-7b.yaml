@@ -1,0 +1,13 @@
+id: qwen-coder-7b
+display_name: Qwen 2.5 Coder 7B Instruct
+source:
+  type: ollama
+  ollama_name: qwen2.5-coder:7b
+size_bytes: 4683000000
+quant: q4_k_m
+context_window: 32768
+capabilities: [chat, code, fim]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 8
+tags: [coding, completion]

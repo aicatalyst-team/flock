@@ -1,0 +1,164 @@
+// Package auth handles API key generation, hashing, validation, and the
+// HTTP middleware that gates protected routes.
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/hadihonarvar/flock/internal/store"
+)
+
+// keyPrefix is the visible prefix on every Flock-issued API key.
+const keyPrefix = "sk-orc-"
+
+// contextKey is an unexported type to avoid context-key collisions.
+type contextKey string
+
+const (
+	ctxKeyAPIKey contextKey = "flock.apikey"
+	ctxKeyScope  contextKey = "flock.scope"
+)
+
+// Generate creates a new random API key, returning the plaintext key
+// (shown to the user once) and its sha256 hash (stored in the DB).
+func Generate(name, scope string) (plain string, rec store.APIKey, err error) {
+	buf := make([]byte, 24)
+	if _, err = rand.Read(buf); err != nil {
+		return "", store.APIKey{}, fmt.Errorf("rand: %w", err)
+	}
+	plain = keyPrefix + base64.RawURLEncoding.EncodeToString(buf)
+	id := randID()
+	rec = store.APIKey{
+		ID:        id,
+		Hash:      Hash(plain),
+		Name:      name,
+		Scope:     scope,
+		CreatedAt: time.Now(),
+	}
+	return plain, rec, nil
+}
+
+// Hash returns the sha256 hex digest of a plain API key.
+func Hash(plain string) string {
+	sum := sha256.Sum256([]byte(plain))
+	return hex.EncodeToString(sum[:])
+}
+
+// Middleware returns an http middleware that enforces API key auth.
+// If requireKeys is false, requests proceed without auth (dev only).
+func Middleware(keys store.APIKeyStore, requireKeys bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !requireKeys {
+				next.ServeHTTP(w, r)
+				return
+			}
+			plain, ok := extractKey(r)
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing_api_key", "Authorization header required")
+				return
+			}
+			key, err := keys.GetByHash(r.Context(), Hash(plain))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
+				return
+			}
+			if key == nil || key.Revoked {
+				writeError(w, http.StatusUnauthorized, "invalid_api_key", "Invalid or revoked API key")
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyAPIKey, key)
+			ctx = context.WithValue(ctx, ctxKeyScope, key.Scope)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireScope returns a middleware that 403s if the request's scope doesn't match.
+func RequireScope(want string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if ScopeFrom(r.Context()) != want {
+				writeError(w, http.StatusForbidden, "forbidden", "Insufficient scope")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireScopeAny returns a middleware that 403s unless the request scope is
+// one of the allowed values.
+func RequireScopeAny(scopes ...string) func(http.Handler) http.Handler {
+	allow := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		allow[s] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !allow[ScopeFrom(r.Context())] {
+				writeError(w, http.StatusForbidden, "forbidden", "Insufficient scope")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ScopeFrom returns the scope attached to the request context (or "").
+func ScopeFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeyScope).(string)
+	return v
+}
+
+// KeyFrom returns the API key record attached to the request context (or nil).
+func KeyFrom(ctx context.Context) *store.APIKey {
+	v, _ := ctx.Value(ctxKeyAPIKey).(*store.APIKey)
+	return v
+}
+
+func extractKey(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	if h != "" {
+		if strings.HasPrefix(h, "Bearer ") {
+			return strings.TrimPrefix(h, "Bearer "), true
+		}
+		return h, true
+	}
+	if h := r.Header.Get("X-Api-Key"); h != "" {
+		return h, true
+	}
+	// Anthropic-style header
+	if h := r.Header.Get("x-api-key"); h != "" {
+		return h, true
+	}
+	return "", false
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body := fmt.Sprintf(`{"error":{"type":"%s","message":%q}}`, code, message)
+	_, _ = w.Write([]byte(body))
+}
+
+func randID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		// extremely unlikely; fall back to a non-random ID
+		return fmt.Sprintf("k_%d", time.Now().UnixNano())
+	}
+	return "k_" + base64.RawURLEncoding.EncodeToString(buf)
+}
+
+// ErrNoKey is returned when no API key is present in a context that requires one.
+var ErrNoKey = errors.New("no API key in context")

@@ -1,0 +1,13 @@
+id: llama-3.2-3b
+display_name: Llama 3.2 3B Instruct
+source:
+  type: ollama
+  ollama_name: llama3.2:3b
+size_bytes: 2019000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, llamacpp]
+hardware:
+  min_ram_gb: 4
+tags: [small, fast]
