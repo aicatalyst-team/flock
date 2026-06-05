@@ -74,6 +74,7 @@ Commands:
   model add <id>           Install a model from the catalog
   model ls                 List installed models
   model search [q]         Search the catalog
+  model info <id>          Full details for one catalog model
   model remove <id>        Uninstall a model
   shard create <model> [N] Orchestrate a sharded model across N workers
   shard ls                 List shards

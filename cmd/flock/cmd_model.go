@@ -11,19 +11,25 @@ import (
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
+// truncStr is also defined in cmd_usage.go (this file uses it).
+var _ = truncStr
+
 func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
-		summary: "install, list, search, or uninstall LLM models",
-		usage:   "flock model <add <id> | ls | search [query] | remove <id>>",
+		summary: "install, list, search, inspect, or uninstall LLM models",
+		usage:   "flock model <add <id> | ls | search [query] | info <id> | remove <id>>",
 		examples: []string{
-			"flock model search coder         # browse the catalog",
-			"flock model add llama-3.2-3b     # install (auto-delegates if sharded)",
-			"flock model ls                   # list installed models",
+			"flock model search                # browse the full catalog",
+			"flock model search coder          # filter to coding models",
+			"flock model info qwen-coder-14b   # full details on one model",
+			"flock model add llama-3.2-3b      # install (auto-delegates if sharded)",
+			"flock model ls                    # list installed models",
 			"flock model remove llama-3.2-3b",
 		},
 		notes: []string{
 			"For sharded models (split across multiple machines) see `flock shard --help`.",
+			"For the complete per-model walkthrough see MODELS.md in the repo.",
 		},
 	}
 	if len(args) == 0 {
@@ -51,6 +57,11 @@ func cmdModel(args []string) {
 			query = args[1]
 		}
 		modelSearch(query)
+	case "info":
+		if len(args) < 2 {
+			die("usage: flock model info <id>")
+		}
+		modelInfo(args[1])
 	default:
 		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
@@ -181,13 +192,162 @@ func modelSearch(query string) {
 	cfg := loadConfigOrExit()
 	cat := loadCatalogOrExit(cfg)
 	q := strings.ToLower(query)
-	fmt.Printf("%-22s %-32s %8s %s\n", "ID", "NAME", "RAM/GB", "TAGS")
+
+	// Find which models are already installed so we can mark them ✓
+	installed := map[string]bool{}
+	if st, err := store.OpenSQLite(cfg.Storage.DSN); err == nil {
+		defer st.Close()
+		if ms, err := st.Models().List(context.Background()); err == nil {
+			for _, m := range ms {
+				installed[m.CatalogID] = true
+			}
+		}
+	}
+
+	fmt.Printf("%-26s %-32s %7s %5s %-22s %s\n", "ID", "NAME", "SIZE", "RAM", "CAPABILITIES", "INSTALLED")
 	for _, e := range cat {
 		if q != "" &&
 			!strings.Contains(strings.ToLower(e.ID), q) &&
-			!strings.Contains(strings.ToLower(e.DisplayName), q) {
+			!strings.Contains(strings.ToLower(e.DisplayName), q) &&
+			!containsAny(e.Capabilities, q) &&
+			!containsAny(e.Tags, q) {
 			continue
 		}
-		fmt.Printf("%-22s %-32s %8d %v\n", e.ID, e.DisplayName, e.Hardware.MinRAMGB, e.Tags)
+		size := "?"
+		if e.SizeBytes > 0 {
+			size = fmt.Sprintf("%.1f GB", float64(e.SizeBytes)/1e9)
+		}
+		caps := strings.Join(e.Capabilities, ",")
+		if len(caps) > 22 {
+			caps = caps[:21] + "…"
+		}
+		mark := ""
+		if installed[e.ID] {
+			mark = "✓"
+		}
+		fmt.Printf("%-26s %-32s %7s %4dG %-22s %s\n",
+			e.ID, truncStr(e.DisplayName, 32), size, e.Hardware.MinRAMGB, caps, mark)
 	}
+	fmt.Println()
+	fmt.Println("Tip: `flock model info <id>` for full details on one model. `flock model add <id>` to install.")
+}
+
+func containsAny(items []string, q string) bool {
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it), q) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelInfo prints the full metadata for a single catalog model + whether
+// it's installed locally + ready-to-paste usage snippets. Matches the kind
+// of info in MODELS.md but condensed for terminal display.
+func modelInfo(id string) {
+	cfg := loadConfigOrExit()
+	cat := loadCatalogOrExit(cfg)
+	entry := models.FindByID(cat, id)
+	if entry == nil {
+		die("no catalog entry for %q (try `flock model search`)", id)
+	}
+
+	// Check installed state
+	st, _ := store.OpenSQLite(cfg.Storage.DSN)
+	var installedRow *store.Model
+	if st != nil {
+		defer st.Close()
+		installedRow, _ = st.Models().Get(context.Background(), id)
+	}
+
+	bold := "\033[1m"
+	dim := "\033[2m"
+	reset := "\033[0m"
+	if os.Getenv("NO_COLOR") != "" {
+		bold, dim, reset = "", "", ""
+	}
+
+	fmt.Printf("%s%s%s — %s\n", bold, entry.ID, reset, entry.DisplayName)
+	fmt.Println()
+
+	// Status
+	status := dim + "not installed" + reset
+	if installedRow != nil {
+		status = "installed · " + installedRow.Status + dim + " (" + installedRow.InstalledAt.Format("2006-01-02") + ")" + reset
+	}
+	fmt.Printf("  %sStatus%s         %s\n", bold, reset, status)
+
+	// Source
+	source := "—"
+	switch entry.Source.Type {
+	case "ollama":
+		source = "ollama: " + entry.Source.OllamaName
+	case "huggingface":
+		source = "huggingface: " + entry.Source.Repo
+		if entry.Source.File != "" {
+			source += " (" + entry.Source.File + ")"
+		}
+	case "file":
+		source = "file: " + entry.Source.Path
+	}
+	fmt.Printf("  %sSource%s         %s\n", bold, reset, source)
+
+	// Size
+	if entry.SizeBytes > 0 {
+		fmt.Printf("  %sSize%s           %.1f GB\n", bold, reset, float64(entry.SizeBytes)/1e9)
+	}
+	if entry.Quant != "" {
+		fmt.Printf("  %sQuant%s          %s\n", bold, reset, entry.Quant)
+	}
+	if entry.ContextWindow > 0 {
+		fmt.Printf("  %sContext window%s %d tokens\n", bold, reset, entry.ContextWindow)
+	}
+	fmt.Printf("  %sMin RAM%s        %d GB\n", bold, reset, entry.Hardware.MinRAMGB)
+	if entry.Hardware.MinVRAMGB > 0 {
+		fmt.Printf("  %sMin VRAM%s       %d GB\n", bold, reset, entry.Hardware.MinVRAMGB)
+	}
+	if len(entry.Capabilities) > 0 {
+		fmt.Printf("  %sCapabilities%s   %s\n", bold, reset, strings.Join(entry.Capabilities, ", "))
+	}
+	if len(entry.RecommendedEngines) > 0 {
+		fmt.Printf("  %sEngines%s        %s\n", bold, reset, strings.Join(entry.RecommendedEngines, ", "))
+	}
+	if len(entry.Tags) > 0 {
+		fmt.Printf("  %sTags%s           %s\n", bold, reset, strings.Join(entry.Tags, ", "))
+	}
+	if entry.Sharding.Required {
+		fmt.Printf("  %sSharding%s       required (default %d shards, %s engine)\n",
+			bold, reset, entry.Sharding.DefaultShards, entry.Sharding.Engine)
+	}
+
+	// Install + usage snippets
+	fmt.Println()
+	fmt.Printf("%sInstall%s\n", bold, reset)
+	if entry.Sharding.Required {
+		fmt.Printf("  flock shard create %s %d\n", entry.ID, max2(entry.Sharding.DefaultShards))
+	} else {
+		fmt.Printf("  flock model add %s\n", entry.ID)
+	}
+
+	fmt.Println()
+	fmt.Printf("%sUse via API (OpenAI shape)%s\n", bold, reset)
+	fmt.Printf("  curl http://localhost:8080/v1/chat/completions \\\n")
+	fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
+	fmt.Printf("    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n", entry.ID)
+	fmt.Println()
+	fmt.Printf("%sUse via Claude Code%s\n", bold, reset)
+	fmt.Printf("  export ANTHROPIC_BASE_URL=http://localhost:8080\n")
+	fmt.Printf("  export ANTHROPIC_AUTH_TOKEN=sk-orc-...\n")
+	fmt.Printf("  export ANTHROPIC_MODEL=%s\n", entry.ID)
+	fmt.Printf("  claude\n")
+	fmt.Println()
+	fmt.Printf("%sFull walkthrough%s   https://github.com/hadihonarvar/flock/blob/main/MODELS.md#%s\n",
+		bold, reset, strings.ReplaceAll(entry.ID, ".", "-"))
+}
+
+func max2(n int) int {
+	if n < 2 {
+		return 2
+	}
+	return n
 }
