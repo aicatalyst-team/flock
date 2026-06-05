@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -83,6 +84,27 @@ func cmdUp(args []string) {
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	engineOK := eng.Health(healthCtx) == nil
 	healthCancel()
+
+	// Register the leader as a "local" Node row so `flock node ls` and the
+	// admin UI show this machine alongside any joined workers. Best-effort.
+	{
+		listen := cfg.Listen
+		if listen == "" {
+			listen = ":8080"
+		}
+		hwJSON, _ := json.Marshal(caps)
+		_ = st.Nodes().Upsert(context.Background(), store.Node{
+			ID:            "local",
+			Hostname:      caps.Hostname,
+			OS:            caps.OS,
+			Arch:          caps.Arch,
+			RAMGB:         caps.RAMGB,
+			Address:       "127.0.0.1" + listen,
+			HardwareJSON:  string(hwJSON),
+			LastHeartbeat: time.Now(),
+			State:         "ready",
+		})
+	}
 
 	// Sync any locally-loaded models into placements so the Router knows
 	// the leader's own engine has them. Best-effort.

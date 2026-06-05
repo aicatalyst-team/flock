@@ -5,17 +5,17 @@
 //
 // Reference: https://docs.anthropic.com/en/api/messages
 //
-// v0.2 supports:
+// Currently supports:
 //   - text content (string or array of text blocks)
 //   - system prompt (string)
 //   - streaming via SSE events (message_start, content_block_*, message_delta, message_stop)
-//   - tools (tool_use / tool_result content blocks, basic round-trip)
+//   - tools (tool_use / tool_result content blocks, with Input + Content preserved)
 //
-// Out of scope for v0.2:
+// Not implemented (open issues):
 //   - extended thinking (`thinking` content blocks)
 //   - prompt caching (cache_control)
 //   - computer use
-//   - vision (image content blocks) — planned for v0.3
+//   - vision (image content blocks)
 package api
 
 import (

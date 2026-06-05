@@ -67,7 +67,7 @@ func tokenCreate(name, scope string) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	// For v0.2 the token's name doubles as its UserID. Once OIDC lands the
+	// The token's name doubles as its UserID today. Once OIDC lands the
 	// UserID will come from the issuing admin's session.
 	userID := name
 	if scope == "node" {

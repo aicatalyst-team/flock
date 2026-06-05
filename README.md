@@ -136,7 +136,7 @@ claude
 
 ### Verified to work
 
-- ✅ `go build ./cmd/flock` — clean on go 1.26 / darwin-arm64
+- ✅ `go build ./cmd/flock` — clean on go 1.22 / darwin-arm64
 - ✅ `go vet ./...` — clean
 - ✅ `flock up` boots, bootstraps admin key, starts gateway
 - ✅ `flock up` → `curl /v1/models` returns the auto-picked model
@@ -668,7 +668,7 @@ Idempotent. Re-running it shows status if already running.
 
 ### Add a node
 
-1. From the leader: click **Add Node** in the UI, or run `flock token create --type=node`
+1. From the leader: click **Add Node** in the UI, or run `flock token create --node`
 2. On the new machine: `curl -fsSL https://get.flock.dev | sh -s -- join <leader-url>?token=<token>`
 
 The token is a single-use, time-limited JWT that includes the tailnet auth key. The new node joins the mesh, registers with the leader, and waits for a model assignment.
@@ -780,7 +780,7 @@ Shows: hardware specs, current models, recent requests, error log, resource util
 
 ```bash
 flock model search coding
-flock model search vision --max-size=20gb
+flock model search vision
 ```
 
 ### Add a model
@@ -813,15 +813,9 @@ flock model ls
 flock model remove qwen-coder-14b
 ```
 
-### Add a LoRA adapter
+### Add a LoRA adapter (planned, v0.5)
 
-```bash
-flock model adapter add my-internal-style \
-  --base qwen-coder-14b \
-  --source hf:myorg/qwen-internal-style-lora
-```
-
-Now `model=qwen-coder-14b+my-internal-style` in API requests applies the adapter.
+LoRA adapter loading (`flock model adapter add`) is on the roadmap; see TASKS.md.
 
 ---
 
@@ -917,10 +911,9 @@ print(resp.content[0].text)
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming |
-| `POST` | `/v1/completions` | Legacy text completion |
-| `POST` | `/v1/embeddings` | Batched |
-| `POST` | `/v1/audio/transcriptions` | Whisper-compatible |
 | `GET` | `/v1/models` | Lists available models |
+
+(Planned: `/v1/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`.)
 
 ### Anthropic surface
 
@@ -933,16 +926,28 @@ print(resp.content[0].text)
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/admin/v1/nodes` | List nodes |
-| `POST` | `/admin/v1/nodes/{id}/drain` | Drain a node |
-| `GET` | `/admin/v1/models` | List models |
-| `POST` | `/admin/v1/models` | Install model |
-| `POST` | `/admin/v1/tokens` | Issue join/API tokens |
-| `GET` | `/admin/v1/usage` | Per-user metering |
 | `GET` | `/healthz` `/readyz` | Liveness / readiness |
 | `GET` | `/metrics` | Prometheus exposition |
+| `GET` | `/admin/v1/nodes` | List nodes |
+| `POST` | `/admin/v1/nodes/register` | (scope=admin or node) Worker registration |
+| `POST` | `/admin/v1/nodes/heartbeat` | (scope=admin or node) Worker heartbeat with loaded models |
+| `POST` | `/admin/v1/nodes/{id}/drain` | Mark node as draining |
+| `DELETE` | `/admin/v1/nodes/{id}` | Forget a node |
+| `GET` | `/admin/v1/models` | List installed models |
+| `GET` | `/admin/v1/catalog` | List catalog entries |
+| `POST` | `/admin/v1/models` | Install a model (auto-delegates to shard orch if `sharding.required`) |
+| `DELETE` | `/admin/v1/models/{id}` | Uninstall (auto-handles sharded teardown) |
+| `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
+| `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
+| `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
+| `GET` | `/admin/v1/shards` | List shards across all models |
+| `POST` | `/admin/v1/shards/create` | Orchestrate a sharded model |
+| `DELETE` | `/admin/v1/shards/{model_id}` | Tear down a sharded model |
+| `GET` | `/admin/v1/usage/recent` | Recent inference records |
+| `GET` | `/admin/v1/audit/recent` | Recent admin actions |
+| `GET` | `/admin/v1/config` | Effective config, secrets redacted |
 
-All admin endpoints require an admin key (`flock token create --type=admin`).
+All admin endpoints require an admin key (`flock token create --admin`).
 
 ### Model routing rules
 
@@ -1077,13 +1082,11 @@ Common issues:
 - Make sure the model ID in your request matches a local catalog ID, or one of the proxied vendor IDs.
 - `flock model ls` to confirm what's loaded.
 
-### My RAG embeddings are slow
+### Slow inference?
 
-- Embeddings endpoint is on the small-model pool. Add a dedicated node:
-
-```bash
-flock model add bge-m3 --pin-to-node n_ghi789
-```
+- Check engine reachability: `flock doctor`
+- Add a node + install the model there: `flock node` / `flock model add` (router auto-load-balances)
+- For sharded large models: `flock shard create`
 
 ---
 

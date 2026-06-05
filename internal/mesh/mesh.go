@@ -1,23 +1,21 @@
 // Package mesh provides the node-to-node networking layer.
 //
-// v0.2 ships the "lan" backend: nodes report a directly-routable address
+// Today ships the "lan" backend: nodes report a directly-routable address
 // (host:port on the LAN), and the leader contacts them over plain HTTP.
 // This requires nodes to be reachable from the leader and is appropriate
-// for a single trusted network.
+// for a single trusted network (or Tailscale at the host level).
 //
-// The "tailscale" backend (using tsnet) is defined as an interface here
-// and will be implemented in v0.3 — it solves NAT traversal, mTLS, and
-// cross-network discovery.
+// A "tailscale" backend (using tsnet) is on the roadmap — it would solve
+// NAT traversal, mTLS, and cross-network discovery in-process.
 package mesh
 
 import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
 )
 
-// Backend abstracts the underlying overlay network. v0.2 only ships LAN.
+// Backend abstracts the underlying overlay network. Currently only LAN ships.
 type Backend interface {
 	Name() string
 	// Address returns a host:port that other nodes can reach this node at.
@@ -85,13 +83,4 @@ func firstNonLoopback() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no non-loopback IPv4 interface found")
-}
-
-// SplitHostPort is a small helper for parsing addresses; returns ("", port) if
-// the string is just ":<port>" so the leader can substitute its own IP.
-func SplitHostPort(addr string) (host string, port string, err error) {
-	if strings.HasPrefix(addr, ":") {
-		return "", addr[1:], nil
-	}
-	return net.SplitHostPort(addr)
 }

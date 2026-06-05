@@ -1,6 +1,6 @@
 // Package agent contains node-local logic: hardware capability detection,
-// heartbeat reporting, and assignment handling. v0.1 only ships capability
-// detection; multi-node loops land in v0.2.
+// the heartbeat loop, the worker HTTP server, and the process supervisor
+// used for sharded-model orchestration.
 package agent
 
 import (

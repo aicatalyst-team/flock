@@ -143,10 +143,13 @@ You'll see JSON like:
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
 export ANTHROPIC_AUTH_TOKEN=sk-orc-xK9p…
+export ANTHROPIC_MODEL=llama-3.2-1b      # tell Claude Code which local model to use
 claude
 ```
 
-Now Claude Code talks to your local Llama 1B instead of api.anthropic.com.
+Claude Code now talks to your local Llama 1B instead of `api.anthropic.com`.
+
+> **Why `ANTHROPIC_MODEL`?** Without it Claude Code defaults to a `claude-*` model name. With no `ANTHROPIC_API_KEY` set, Flock won't proxy to real Anthropic, so the request would 404 against your local engine. Setting `ANTHROPIC_MODEL` to a local catalog id makes Claude Code request your local model.
 
 ### D) Cursor / Aider / OpenAI SDK
 
@@ -169,7 +172,7 @@ Most common failures:
 | `command not found: flock` | The install dir isn't on your PATH. Run: `export PATH="$HOME/.local/bin:$PATH"` (and add it to `~/.zshrc` or `~/.bashrc` to make it permanent) |
 | `engine (ollama) at http://127.0.0.1:11434 is not reachable` | Start Ollama: `ollama serve &` (Linux: `sudo systemctl start ollama`) |
 | `502 Bad Gateway` with `llama-server binary not found` | The Homebrew `ollama` formula on Apple Silicon is broken. Fix: `brew uninstall ollama && brew install --cask ollama` |
-| `Port 8080 in use` | Another process is on it. Use a different port: `FLOCK_LISTEN=:8081 flock up` |
+| `Port 8080 in use` | Another process is on it. Use a different port: `FLOCK_LISTEN=:8090 flock up` (avoid `:8081` — that's the default worker port) |
 | `no admin key on disk` (running CLI) | `flock up` isn't running on this host. Start it first, then re-run the CLI command |
 
 More fixes in the [main README's troubleshooting table](README.md#troubleshooting-installation).
@@ -217,7 +220,7 @@ Same install command everywhere. The first machine becomes the **leader**, every
       ✔ listening :8080
 
    4. flock token create --node
-      ✔ sk-orc-Node-AbCd1234…
+      ✔ sk-orc-NodeJoin-AbCd1234…
               ─────► copy this token to the worker machine
 
                                                   1. install Ollama
@@ -273,7 +276,10 @@ flock model add qwen-coder-7b
 
 ```bash
 flock node ls
-# you should see both machines listed
+# example output:
+# ID         HOSTNAME      OS/ARCH       ADDRESS              STATE   LAST HB
+# local      machine-a     darwin/arm64  127.0.0.1:8080       ready   2026-06-05T…
+# n_abc123   machine-b     darwin/arm64  192.168.1.50:8081    ready   2026-06-05T…
 ```
 
 Any request the gateway gets for `qwen-coder-7b` is now routed automatically to the worker. If you install the **same** model on two workers, the leader load-balances between them.

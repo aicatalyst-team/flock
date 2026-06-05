@@ -3,7 +3,7 @@
 // for its piece, then launches the coordinator llama-server locally and
 // stitches everything together via a placement row that the router resolves.
 //
-// v0.4 scope:
+// Current scope:
 //   - manual shard-count override (`--shards=N`) or catalog default
 //   - simple bin-pack on free RAM (highest free first)
 //   - coordinator always runs on the leader

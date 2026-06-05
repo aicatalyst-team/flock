@@ -3,7 +3,7 @@
 // interface so the rest of the codebase doesn't need to know whether a
 // request is served locally or proxied to a worker.
 //
-// Selection policy (v0.3):
+// Selection policy:
 //
 //  1. If the local engine has the model loaded, use local (lowest latency).
 //  2. Otherwise look up all worker nodes that have the model loaded.
@@ -118,7 +118,7 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	}
 
 	// 0. Is this a SHARDED model? If yes, route to its coordinator (always
-	//    local in v0.4) via a llamacpp engine. The coordinator handles the
+	//    local today) via a llamacpp engine. The coordinator handles the
 	//    fan-out to rpc-server backends on workers internally.
 	if eng, ok := r.shardCoordinator(ctx, model); ok {
 		return eng, "shard:" + model, nil

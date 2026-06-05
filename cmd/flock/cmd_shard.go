@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 )
 
 // cmdShard dispatches `flock shard <subcommand>`.
@@ -102,6 +101,3 @@ func shardRemove(model string) {
 	}
 	ok(os.Stdout, "removed %s", model)
 }
-
-// silence "imported and not used" if time goes unused after future edits
-var _ = time.Now

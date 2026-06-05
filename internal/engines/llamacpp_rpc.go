@@ -3,15 +3,13 @@
 // which in turn shards a single model across multiple machines via
 // `rpc-server` processes.
 //
-// v0.3 scope:
-//   - This driver IS a thin OpenAI-compatible client (same shape as VLLM/MLX).
-//     It does not orchestrate the rpc-server processes on workers — that
-//     remains a user-supplied setup until a proper sharding scheduler lands
-//     in v0.4.
-//   - Use it when you want one model split across N machines that physically
-//     can't run on any single one (e.g., 70B Q4 across 2× Mac Mini).
+// This driver is a thin OpenAI-compatible client (same shape as VLLM/MLX).
+// The sharding orchestrator (`internal/scheduler/sharding.go`) launches
+// `rpc-server` on workers automatically and starts the coordinator
+// `llama-server` on the leader — but you can also run it by hand and
+// just point Flock at the result via `engine.preferred: llamacpp`.
 //
-// Manual setup workflow (until v0.4 automates it):
+// Manual setup workflow (if you prefer to manage processes yourself):
 //
 //	# On each worker node:
 //	rpc-server -p 50052 &

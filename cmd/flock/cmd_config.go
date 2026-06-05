@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -90,9 +91,7 @@ func printConfigPretty(prefix string, v any, depth int) {
 			}
 			keys = append(keys, k)
 		}
-		// stable order
-		sort := func(a, b int) bool { return keys[a] < keys[b] }
-		_ = sort
+		sort.Strings(keys)
 		for _, k := range keys {
 			child := t[k]
 			label := k

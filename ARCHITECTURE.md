@@ -2,7 +2,7 @@
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
 
-> **Doc-vs-code currency:** this document describes v0.3 (cross-node routing landed). The internal layout matches `main` as of commit `2dccb48`. If you find a mismatch the code is authoritative — please file an issue and/or PR.
+> **Doc-vs-code currency:** this document describes v0.4 (cross-node routing + sharding auto-orchestration + CLI/UI parity). The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
 ---
 
@@ -519,17 +519,19 @@ remove node from registry
 
 ## Engine drivers
 
-Each driver is a Go package under `internal/engines/` implementing:
+Each driver is a Go package under `internal/engines/` implementing (from `internal/engines/types.go`):
 
 ```go
 type Engine interface {
     Name() string
-    Capabilities() Capabilities
-    LoadModel(ctx context.Context, m Model) error
-    UnloadModel(ctx context.Context, id string) error
-    Health(ctx context.Context) (Health, error)
-    Endpoint() string  // local URL where requests should go
-    Shutdown(ctx context.Context) error
+    Endpoint() string
+    Health(ctx context.Context) error
+
+    List(ctx context.Context) ([]string, error)
+    Pull(ctx context.Context, modelID string, onProgress func(status string, completed, total int64)) error
+    Delete(ctx context.Context, modelID string) error
+
+    Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
 }
 ```
 
@@ -742,6 +744,7 @@ Rules of thumb:
 ```
 flock/
 ├── README.md                  # user docs
+├── QUICKSTART.md              # 3-min new user landing page
 ├── ARCHITECTURE.md            # this file
 ├── TASKS.md                   # implementation plan
 ├── LICENSE                    # Apache 2.0
@@ -749,60 +752,47 @@ flock/
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md            # short pointer to this doc
 ├── Makefile                   # dev shortcuts
-├── go.mod
-├── go.sum
+├── go.mod, go.sum
 │
-├── cmd/
-│   └── flock/                 # single-binary entrypoint
-│       ├── main.go
-│       ├── cmd_up.go
-│       ├── cmd_join.go
-│       ├── cmd_node.go
-│       ├── cmd_model.go
-│       └── …
+├── .github/workflows/         # CI + Release workflows
+├── .goreleaser.yaml           # release config
+├── .golangci.yml              # lint config
 │
-├── internal/
-│   ├── controlplane/          # leader HTTP server + admin API
-│   ├── agent/                 # per-node loop + worker HTTP server + process supervisor
-│   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
-│   ├── router/                # router.go — model → node dispatch, least-loaded, shard coordinator
-│   ├── scheduler/             # sharding.go — orchestrator for sharded model lifecycle
-│   ├── mesh/                  # mesh.go — LAN backend; tsnet interface for v0.5
-│   ├── engines/               # ollama.go, vllm.go, mlx.go, llamacpp_rpc.go
-│   ├── models/                # catalog parser (now incl. ShardingSpec), auto-pick
-│   ├── store/                 # SQLite backend (now incl. shards table) (Postgres v1.0)
-│   ├── auth/                  # API keys, scope middleware
-│   ├── config/                # YAML + env loader
-│   ├── metrics/               # Prometheus declarations
-│   └── ui/                    # embed.go + index.html (single embedded page incl. Shards tab)
-│
-├── web/                       # Next.js UI
-│   ├── package.json
-│   ├── src/
-│   └── dist/                  # built static, embedded by Go
-│
-├── catalog/                   # YAML model catalog entries
-│   ├── qwen3-coder.yaml
-│   ├── llama-3.3.yaml
+├── cmd/flock/                 # single-binary entrypoint + every subcommand
+│   ├── main.go                # dispatch + top-level help
+│   ├── help.go                # helpSpec / showHelp / dieHelp / wantsHelp
+│   ├── common.go              # adminCall + readLocalAdminKey + shared helpers
+│   ├── cmd_{up,down,status,join,doctor,version}.go
+│   ├── cmd_{node,model,shard,token,usage,audit,config}.go
 │   └── …
 │
-├── dashboards/                # Grafana JSON
+├── internal/
+│   ├── controlplane/          # leader HTTP server + admin API + middlewares
+│   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
+│   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
+│   ├── router/                # model → node dispatch, least-loaded, shard coordinator
+│   ├── scheduler/             # sharding.go — orchestrator for sharded model lifecycle
+│   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
+│   ├── engines/               # types + ollama/vllm/mlx/llamacpp_rpc drivers + registry
+│   ├── models/                # catalog parser (incl. ShardingSpec), auto-pick
+│   ├── store/                 # SQLite backend (api_keys / models / nodes / placements / shards / usage / audit)
+│   ├── auth/                  # API keys + scope middleware
+│   ├── config/                # YAML + env loader
+│   ├── metrics/               # Prometheus declarations
+│   └── ui/                    # embed.go + index.html (single embedded page)
 │
-├── installer/
-│   ├── install.sh             # the curl | sh script
-│   └── homebrew/              # tap formula
+├── catalog/                   # YAML model catalog entries
+│   ├── llama-3.2-1b.yaml
+│   ├── llama-3.2-3b.yaml
+│   ├── llama-3.3-70b-sharded.yaml
+│   └── qwen2.5-coder-{7b,14b,32b}.yaml
 │
-├── deploy/
-│   ├── launchd/               # macOS plist
-│   ├── systemd/               # Linux unit
-│   └── docker/                # optional worker images
-│
-├── docs/                      # extended docs (RFCs, ADRs)
-│
-└── test/
-    ├── integration/
-    └── e2e/
+└── installer/
+    ├── install.sh             # the curl | sh script
+    └── homebrew/flock.rb      # tap formula template (publishing disabled until tap repo exists)
 ```
+
+*Planned dirs* (not present yet): `web/` (separate Next.js UI alternative to embed), `dashboards/` (Grafana JSON), `deploy/{launchd,systemd,docker}/`, `docs/` (RFC archive), `test/{integration,e2e}/`.
 
 ### Naming conventions
 

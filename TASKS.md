@@ -4,7 +4,7 @@ Concrete task breakdown for the team building Flock. Each milestone ships a usab
 
 For user-facing docs see [README.md](README.md). For design rationale see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current shipped state (as of commit `2dccb48`)
+## Current shipped state (v0.4)
 
 **Verified build**: `go build ./cmd/flock` clean on go 1.26 / darwin-arm64. `go vet ./...` clean. `flock up` boots, prints admin key, gateway responds.
 

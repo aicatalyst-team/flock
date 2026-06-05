@@ -288,8 +288,9 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 	// The presented bearer token doubles as the shared secret for both
 	// directions of communication. Store it on the node row so the router
 	// can authenticate outbound calls to the worker.
-	// NOTE: stored plaintext for v0.3 — replace with HMAC-based mutual auth
-	// once the OIDC + key-management story lands.
+	// NOTE: stored plaintext today — assumes a trusted network (LAN or
+	// Tailscale). Replace with HMAC-based mutual auth once the OIDC +
+	// key-management story lands.
 	workerToken := extractBearer(r)
 	n := store.Node{
 		ID:            req.ID,
@@ -583,8 +584,8 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
 // ---- config view ----
 
 // getConfig returns a sanitized view of the effective config (secrets
-// redacted). Editing is still file-based for v0.4 — too easy to brick a
-// running cluster via a typo'd HTTP PUT.
+// redacted). Editing is file-based — too easy to brick a running cluster
+// via a typo'd HTTP PUT.
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	type view struct {
 		Listen      string            `json:"listen"`

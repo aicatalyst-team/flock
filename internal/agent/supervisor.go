@@ -3,7 +3,7 @@
 // shard). Wraps os/exec with start/stop/list/logs + a TCP-port readiness
 // probe so callers can wait until a launched process is actually serving.
 //
-// v0.4 scope: no automatic restart on crash, no resource limits, no
+// Current scope: no automatic restart on crash, no resource limits, no
 // process namespacing. The orchestrator marks failed shards and the
 // admin re-runs `flock model add`. Restart-on-crash is the obvious
 // follow-up.

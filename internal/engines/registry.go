@@ -8,8 +8,9 @@ func New(name, endpoint string) (Engine, error) {
 	return NewWithAuth(name, endpoint, "")
 }
 
-// NewWithAuth returns an Engine by name. As of v0.2: ollama, vllm, mlx.
-// The apiKey is forwarded to upstreams that support Bearer auth (vLLM).
+// NewWithAuth returns an Engine by name. Supported: ollama, vllm, mlx,
+// llamacpp / llamacpp-rpc. The apiKey is forwarded to upstreams that
+// support Bearer auth (vLLM).
 func NewWithAuth(name, endpoint, apiKey string) (Engine, error) {
 	switch name {
 	case "ollama":
