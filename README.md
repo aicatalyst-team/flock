@@ -835,7 +835,16 @@ LoRA adapter loading (`flock model adapter add`) is on the roadmap; see TASKS.md
 
 ## Connecting clients
 
-The web UI generates these snippets per tool, with your real key baked in.
+The snippets below tell you exactly what to paste into each client today. Each one needs (a) your Flock base URL and (b) an API key (admin or user-scope).
+
+> **Coming in v0.5 (tracked as [M3-T20 → M3-T26](TASKS.md#onboarding-and-sharing-track-m3-t20--m3-t26)):** these snippets get generated automatically.
+>
+> - `flock connect claude-code` — prints exact env vars with your base URL + token already substituted
+> - `flock connect cursor` / `aider` / `continue` / `zed` / `cline` / `qwen-code` / `openai-sdk` / `anthropic-sdk` / `curl` — same, per tool
+> - `flock invite <name>` — creates a user-scope token and prints a complete share card with snippets for all 10 supported clients (paste-into-Slack friendly)
+> - Web dashboard grows a **Connect** tab (one-click copy + test-connection button) and a **Playground** tab (in-browser chat for sanity-checking before wiring up Cursor)
+>
+> Until those land, copy from the snippets below and substitute your own URL / key.
 
 ### Cursor
 

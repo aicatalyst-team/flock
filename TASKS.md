@@ -570,11 +570,61 @@ Goal: ready for an actual team of 10. Per-user keys, quotas, OIDC, full observab
 
 ---
 
+### Onboarding-and-sharing track (M3-T20 → M3-T26)
+
+The whole point of Flock is your team's existing AI tools (Claude Code, Cursor, Aider, …) working against your hardware. If wiring those up isn't trivially easy, nothing else matters. These seven tasks turn the post-install experience from "go read README on GitHub" into "the dashboard shows you exactly what to paste, the CLI prints exact env vars, and inviting a teammate is one command."
+
+Implementation rule (per Definition of Done): each task ships as a CLI command first; web UI invokes the same Go function the CLI invokes.
+
+### M3-T20 — `flock connect <client>` CLI
+
+- Owner: BE · Effort: S (1d) · Depends on: M3-T01
+- Files: `cmd/flock/cmd_connect.go` (new), `internal/control/connect.go` (new), `internal/connect/snippets/` (new — one Go template per client)
+- Acceptance: `flock connect <client>` prints exact, ready-to-paste configuration for the named client, with the user's base URL and token already substituted. `flock connect --list` lists supported clients. Initial set (10): `claude-code`, `cursor`, `aider`, `continue`, `zed`, `cline`, `qwen-code`, `openai-sdk`, `anthropic-sdk`, `curl`. Per-client snippets live in `internal/connect/snippets/*.tmpl` so adding a new client is one file. Token defaults to "current admin token" but `--token <key>` overrides for scripting.
+
+### M3-T21 — `flock invite <name>` + shareable config card
+
+- Owner: BE · Effort: S (1d) · Depends on: M3-T20, M3-T01
+- Files: `cmd/flock/cmd_invite.go` (new), `internal/control/invite.go` (new)
+- Acceptance: `flock invite <name>` creates a user-scope token (default quota from config), prints a complete share card containing base URL, token, and `flock connect <client>` output for all 10 supported clients. `--quota <n>` and `--clients <list>` flags. Token is shown once. Logged in audit. Output is paste-into-Slack-friendly markdown by default; `--format json` for scripting.
+
+### M3-T22 — `flock up` next-step banner
+
+- Owner: BE · Effort: S (½d) · Depends on: M3-T20
+- Files: `cmd/flock/cmd_up.go`
+- Acceptance: The end-of-boot banner is replaced with an explicit next-steps list pointing to the Connect tab in the dashboard and to `flock connect <client>` for the three most-used clients (Claude Code, Cursor, curl). The banner detects whether an admin token was just created (first-run) vs. existing setup, and tunes wording accordingly. First-run also nudges `flock invite` for inviting teammates.
+
+### M3-T23 — Dashboard "Connect" tab (wraps M3-T20)
+
+- Owner: BE/UI · Effort: M (2d) · Depends on: M3-T20, M4-T20 (admin API wraps CLI)
+- Files: `internal/ui/index.html`, `internal/api/admin_connect.go` (new)
+- Acceptance: Top-level tab in the dashboard (between Tokens and Usage). Dropdown to pick a client; the pre-filled config block appears below with a Copy button and a one-line "what this does" caption. Behind the scenes the tab GETs an admin endpoint that invokes `internal/control/connect.go` — the exact same function `flock connect` calls. Token used in the snippet is the session token (admin) by default, with a sub-dropdown to swap in any user-scope token from the Tokens tab.
+
+### M3-T24 — "Test connection" health-check + button
+
+- Owner: BE/UI · Effort: S (½d) · Depends on: M3-T23
+- Files: `internal/api/admin_healthcheck.go` (new), `internal/ui/index.html`
+- Acceptance: New admin endpoint `/admin/v1/healthcheck` sends a 5-token chat completion through the gateway using the supplied token, and returns `{ok, latency_ms, model, engine, error?}`. The Connect tab's Test button calls this and shows ✅/❌ inline with the latency. Lets users prove the wiring works without leaving the dashboard.
+
+### M3-T25 — Dashboard "Playground" tab (elevated from M4-T01)
+
+- Owner: BE/UI · Effort: M (2d) · Depends on: M3-T23
+- Files: `internal/ui/index.html`, `internal/api/admin_playground.go` (new)
+- Acceptance: New tab. Model picker (populated from `/v1/models`), system-prompt textarea, user-message textarea, Send button, streaming response panel. Uses `/v1/chat/completions` via the user's session token. Lets a non-technical user verify "yes, the gateway and model work" in 10 seconds. **Supersedes M4-T01** — pulled forward because it's part of the headline onboarding flow.
+
+### M3-T26 — Invite-from-UI flow (supersedes M3-T15)
+
+- Owner: BE/UI · Effort: M (1–2d) · Depends on: M3-T21, M3-T23
+- Files: `internal/ui/index.html`, `internal/api/admin_invite.go` (new)
+- Acceptance: Tokens tab grows an "Invite teammate" button. Opens a small form (name, quota, optional email). Submitting calls the admin endpoint that wraps `internal/control/invite.go` (same code path as `flock invite`). Returns the full share card (token + per-client snippets) in-modal with a one-click Copy-as-markdown and a "Copy share URL" option. **Supersedes M3-T15** — that task referenced the Next.js scaffold (`web/src/app/users/...`) which was never built; the real embedded-HTML UI lives in `internal/ui/index.html`.
+
+---
+
 ## Milestone 4 — Polish + public beta (Weeks 13–16)
 
 Goal: launch publicly. Quality bar high enough to keep stars and adopt PRs.
 
-### M4-T01 — Web UI: in-browser playground
+### M4-T01 — Web UI: in-browser playground · **superseded by M3-T25**
 
 - Owner: UI · Effort: M · Depends on: M2-T12
 - Files: `web/src/app/playground/page.tsx`
