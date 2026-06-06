@@ -220,19 +220,19 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
                                           │
                                           │   ONE URL · ONE API KEY
                                           ▼
-      ┌──────────────────────────────────────────────────────────────────────┐
-      │                  <span class="text-emerald-400">⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢</span>                              │
-      │                  (this is what we built)                             │
-      │  ────────────────────────────────────────────────────────────────    │
-      │  Gateway     OpenAI + Anthropic on /v1/chat/completions              │
+<span class="text-emerald-300">      ┌──────────────────────────────────────────────────────────────────────┐
+      │                  <span class="text-emerald-200 font-bold">⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢</span>                              │
+      │                  <span class="text-emerald-400">(this is what we built)</span>                             │
+      │  <span class="text-emerald-500">────────────────────────────────────────────────────────────────</span>    │
+      │  <span class="text-emerald-200 font-bold">Gateway</span>     OpenAI + Anthropic on /v1/chat/completions              │
       │              per-user keys · daily quotas · full audit log           │
       │              admin dashboard at :8080                                │
       │                                                                      │
-      │  Router      Same model on N nodes  → load-balance                   │
+      │  <span class="text-emerald-200 font-bold">Router</span>      Same model on N nodes  → load-balance                   │
       │              Different models per node → route by placement          │
       │              Model bigger than any node → split via llama.cpp-RPC    │
       │              Claude / GPT requested → proxy to vendor                │
-      └─────────────────────────────┬────────────────────────────────────────┘
+      └─────────────────────────────┬────────────────────────────────────────┘</span>
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
