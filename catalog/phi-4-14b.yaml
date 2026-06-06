@@ -1,0 +1,13 @@
+id: phi-4-14b
+display_name: Microsoft Phi-4 14B
+source:
+  type: ollama
+  ollama_name: phi4:14b
+size_bytes: 8000000000
+quant: q4_k_m
+context_window: 16384
+capabilities: [chat, reasoning]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [reasoning, small, microsoft]

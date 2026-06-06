@@ -1,0 +1,13 @@
+id: mistral-nemo-12b
+display_name: Mistral Nemo 12B (128K context)
+source:
+  type: ollama
+  ollama_name: mistral-nemo:12b
+size_bytes: 7000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [general, long-context, mistral]

@@ -1,0 +1,27 @@
+# GLM-5.1 — Z.ai's frontier agentic / structured-code model.
+# 744B total / 40B active (MoE). MIT license.
+# Q4 weights are ~400 GB — sharding required on anything below a top-tier server.
+#
+# Prereqs:
+#   1. Download GGUF (see https://huggingface.co/THUDM/glm-5.1-GGUF).
+#   2. brew install llama.cpp on every node.
+#   3. At least 4 workers joined.
+id: glm-5.1-sharded
+display_name: Z.ai GLM-5.1 (744B MoE, sharded, agentic coder)
+source:
+  type: file
+  path: /var/lib/flock/models/glm-5.1-q4_k_m.gguf
+size_bytes: 400000000000
+quant: q4_k_m
+context_window: 200000
+capabilities: [chat, code, reasoning, tools]
+recommended_engines: [llamacpp]
+hardware:
+  min_ram_gb: 416
+tags: [moe, sharded, frontier, coding, agentic]
+sharding:
+  required: true
+  default_shards: 4
+  engine: llamacpp
+  rpc_port_base: 50052
+  coordinator_port: 9001

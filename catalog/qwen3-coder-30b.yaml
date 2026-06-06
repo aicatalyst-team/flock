@@ -1,0 +1,13 @@
+id: qwen3-coder-30b
+display_name: Qwen 3 Coder 30B
+source:
+  type: ollama
+  ollama_name: qwen3-coder:30b
+size_bytes: 17500000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, code, fim, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 24
+tags: [coding, agent]

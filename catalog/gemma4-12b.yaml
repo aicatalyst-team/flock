@@ -1,0 +1,13 @@
+id: gemma4-12b
+display_name: Google Gemma 4 12B
+source:
+  type: ollama
+  ollama_name: gemma4:12b
+size_bytes: 8000000000
+quant: q4_k_m
+context_window: 131072
+capabilities: [chat, tools]
+recommended_engines: [ollama, vllm, mlx, llamacpp]
+hardware:
+  min_ram_gb: 12
+tags: [general, multilingual, google]
