@@ -61,7 +61,11 @@ func cmdUpdate(args []string) {
 	if err != nil {
 		die("could not locate current binary: %v", err)
 	}
-	exe, _ = filepath.EvalSymlinks(exe)
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	// else: keep the un-resolved path; better than the empty string we'd get
+	// from swallowing the error.
 
 	// 2. Resolve the target version.
 	target := *pinned
@@ -76,14 +80,20 @@ func cmdUpdate(args []string) {
 
 	current := normalizeVersion("v" + version)
 	wanted := normalizeVersion(target)
+	upToDate := current == wanted
 
-	// 3. Compare current vs wanted.
-	if current == wanted && !*force {
+	// 3. Decide what to do based on --check / --force / version compare.
+	switch {
+	case upToDate && *check && *force:
+		note(os.Stdout, "would force-reinstall %s (already on latest)", target)
+		return
+	case upToDate && *check:
 		ok(os.Stdout, "already on the latest version (%s)", target)
 		return
-	}
-
-	if *check {
+	case upToDate && !*force:
+		ok(os.Stdout, "already on the latest version (%s)", target)
+		return
+	case *check:
 		note(os.Stdout, "update available: %s → %s", current, target)
 		note(os.Stdout, "run: flock update")
 		return
@@ -103,11 +113,16 @@ func cmdUpdate(args []string) {
 	fmt.Println("    flock up")
 }
 
+// userAgent identifies us to GitHub. Anonymous requests without a UA hit a
+// stricter 60/hour rate limit and GitHub's docs explicitly ask for one.
+const userAgent = "flock-update/" + flockRepo
+
 // fetchLatestVersion returns the latest release's tag_name (e.g. "v0.1.0").
 func fetchLatestVersion() (string, error) {
 	req, _ := http.NewRequest(http.MethodGet,
 		"https://api.github.com/repos/"+flockRepo+"/releases/latest", nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", userAgent)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -148,19 +163,24 @@ func downloadAndInstall(version, platform, target string) error {
 		return fmt.Errorf("download: %w", err)
 	}
 
-	// Verify SHA-256 (best-effort — older releases might not have checksums.txt).
+	// Verify SHA-256. checksums.txt missing entirely is best-effort (older
+	// releases didn't ship it). But if it downloads and our artifact isn't
+	// listed, fail closed — installing an unverified binary is worse than
+	// failing loudly.
 	sumPath := filepath.Join(tmpdir, "checksums.txt")
 	if err := download(base+"/checksums.txt", sumPath); err == nil {
-		if expected, found := lookupChecksum(sumPath, asset); found {
-			actual, err := sha256File(tarPath)
-			if err != nil {
-				return fmt.Errorf("sha256: %w", err)
-			}
-			if expected != actual {
-				return fmt.Errorf("checksum MISMATCH (expected %s, got %s) — aborting", expected, actual)
-			}
-			ok(os.Stdout, "checksum verified (sha256)")
+		expected, found := lookupChecksum(sumPath, asset)
+		if !found {
+			return fmt.Errorf("checksums.txt for %s does not list %s — refusing to install unverified binary", version, asset)
 		}
+		actual, err := sha256File(tarPath)
+		if err != nil {
+			return fmt.Errorf("sha256: %w", err)
+		}
+		if expected != actual {
+			return fmt.Errorf("checksum MISMATCH (expected %s, got %s) — aborting", expected, actual)
+		}
+		ok(os.Stdout, "checksum verified (sha256)")
 	} else {
 		warn(os.Stdout, "checksums.txt not available for %s — skipping verification", version)
 	}
@@ -201,6 +221,7 @@ func downloadAndInstall(version, platform, target string) error {
 
 func download(url, dst string) error {
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("User-Agent", userAgent)
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
