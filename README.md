@@ -12,53 +12,53 @@
 
 ## 🗺️ Where Flock sits
 
-<pre style="background:#0f172a; color:#cbd5e1; padding:1.25rem; border-radius:0.5rem; line-height:1.4; overflow-x:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px;">
+```ansi
            ┌──────────────────────────────────────────────────────────────┐
-           │                       <span style="color:#fde68a">YOUR USE CASES</span>                         │
+           │                       [38;2;253;230;138mYOUR USE CASES[0m                         │
            │             (the tools your team already uses)               │
            └──────────────────────────────────────────────────────────────┘
                   │           │          │             │            │
                   ▼           ▼          ▼             ▼            ▼
             ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-            │  <span style="color:#fcd34d">Cursor</span>  │ │  <span style="color:#fcd34d">Claude</span>  │ │  <span style="color:#fcd34d">Aider</span>   │ │  Custom  │ │   curl   │
-            │          │ │   <span style="color:#fcd34d">Code</span>   │ │          │ │ Python   │ │  scripts │
+            │  [38;2;252;211;77mCursor[0m  │ │  [38;2;252;211;77mClaude[0m  │ │  [38;2;252;211;77mAider[0m   │ │  Custom  │ │   curl   │
+            │          │ │   [38;2;252;211;77mCode[0m   │ │          │ │ Python   │ │  scripts │
             │          │ │          │ │          │ │   SDK    │ │          │
             └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
                  │  OpenAI    │ Anthropic  │  OpenAI    │  Either    │  HTTP
                  └────────────┴────────────┴────────────┴────────────┘
                                           │
-                                          │   <span style="color:#fde68a">ONE URL · ONE API KEY</span>
+                                          │   [38;2;253;230;138mONE URL · ONE API KEY[0m
                                           ▼
-<span style="color:#6ee7b7">      ┌──────────────────────────────────────────────────────────────────────┐
-      │                  <span style="color:#a7f3d0; font-weight:bold">⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢</span>                              │
-      │                  <span style="color:#34d399">(this is what we built)</span>                             │
-      │  <span style="color:#10b981">────────────────────────────────────────────────────────────────</span>    │
-      │  <span style="color:#a7f3d0; font-weight:bold">Gateway</span>     OpenAI + Anthropic on /v1/chat/completions              │
-      │              per-user keys · daily quotas · full audit log           │
-      │              admin dashboard at :8080                                │
-      │                                                                      │
-      │  <span style="color:#a7f3d0; font-weight:bold">Router</span>      Same model on N nodes  → load-balance                   │
-      │              Different models per node → route by placement          │
-      │              Model bigger than any node → split via llama.cpp-RPC    │
-      │              Claude / GPT requested → proxy to vendor                │
-      └─────────────────────────────┬────────────────────────────────────────┘</span>
+[38;2;110;231;183m      ┌──────────────────────────────────────────────────────────────────────┐
+      │                  [1;38;2;167;243;208m⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢[0m[38;2;110;231;183m                              │[0m
+[38;2;110;231;183m      │                  [0m[38;2;52;211;153m(this is what we built)[0m[38;2;110;231;183m                             │[0m
+[38;2;110;231;183m      │  [0m[38;2;16;185;129m────────────────────────────────────────────────────────────────[0m[38;2;110;231;183m    │[0m
+[38;2;110;231;183m      │  [0m[1;38;2;167;243;208mGateway[0m[38;2;110;231;183m     OpenAI + Anthropic on /v1/chat/completions              │[0m
+[38;2;110;231;183m      │              per-user keys · daily quotas · full audit log           │[0m
+[38;2;110;231;183m      │              admin dashboard at :8080                                │[0m
+[38;2;110;231;183m      │                                                                      │[0m
+[38;2;110;231;183m      │  [0m[1;38;2;167;243;208mRouter[0m[38;2;110;231;183m      Same model on N nodes  → load-balance                   │[0m
+[38;2;110;231;183m      │              Different models per node → route by placement          │[0m
+[38;2;110;231;183m      │              Model bigger than any node → split via llama.cpp-RPC    │[0m
+[38;2;110;231;183m      │              Claude / GPT requested → proxy to vendor                │[0m
+[38;2;110;231;183m      └─────────────────────────────┬────────────────────────────────────────┘[0m[0m
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
        ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-       │   <span style="color:#93c5fd">Engines</span>   │       │   <span style="color:#93c5fd">Engines</span>   │       │   <span style="color:#f9a8d4">Egress</span>    │
-       │  (any mix)  │       │  (any mix)  │       │   <span style="color:#f9a8d4">proxy</span>     │
-       │  • <span style="color:#93c5fd">Ollama</span>   │       │  • <span style="color:#93c5fd">Ollama</span>   │       │             │
-       │  • <span style="color:#93c5fd">vLLM</span>     │       │  • <span style="color:#93c5fd">vLLM</span>     │       │ api.anthro- │
-       │  • <span style="color:#93c5fd">MLX-LM</span>   │       │  • <span style="color:#93c5fd">MLX-LM</span>   │       │ pic.com     │
-       │  • <span style="color:#93c5fd">llama.cpp</span>│       │  • <span style="color:#93c5fd">llama.cpp</span>│       │ api.openai  │
+       │   [38;2;147;197;253mEngines[0m   │       │   [38;2;147;197;253mEngines[0m   │       │   [38;2;249;168;212mEgress[0m    │
+       │  (any mix)  │       │  (any mix)  │       │   [38;2;249;168;212mproxy[0m     │
+       │  • [38;2;147;197;253mOllama[0m   │       │  • [38;2;147;197;253mOllama[0m   │       │             │
+       │  • [38;2;147;197;253mvLLM[0m     │       │  • [38;2;147;197;253mvLLM[0m     │       │ api.anthro- │
+       │  • [38;2;147;197;253mMLX-LM[0m   │       │  • [38;2;147;197;253mMLX-LM[0m   │       │ pic.com     │
+       │  • [38;2;147;197;253mllama.cpp[0m│       │  • [38;2;147;197;253mllama.cpp[0m│       │ api.openai  │
        └──────┬──────┘       └──────┬──────┘       │ .com        │
               │                     │              └──────┬──────┘
               ▼                     ▼                     ▼
       ┌──────────────────────────────────────────────────────────────────────┐
-      │                    <span style="color:#fde68a">UNDERLYING LLMs / WEIGHTS</span>                         │
+      │                    [38;2;253;230;138mUNDERLYING LLMs / WEIGHTS[0m                         │
       │                                                                      │
-      │   <span style="color:#86efac">YOUR HARDWARE</span>                              <span style="color:#fca5a5">VENDOR APIs</span>             │
+      │   [38;2;134;239;172mYOUR HARDWARE[0m                              [38;2;252;165;165mVENDOR APIs[0m             │
       │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
       │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
       │                                                                      │
@@ -68,7 +68,7 @@
       │   + any HuggingFace or Ollama model.          you pay vendors only  │
       │                                               when YOU chose to.    │
       └──────────────────────────────────────────────────────────────────────┘
-</pre>
+```
 
 **One-sentence version:** Flock is the layer that lets your tools talk to *any* LLM — open-weight on your hardware, or hosted Claude / GPT — through **one URL and one API key**, with the team controls (quotas, audit, per-user keys) that the raw vendor APIs don't give you.
 
