@@ -12,53 +12,53 @@
 
 ## 🗺️ Where Flock sits
 
-```
+<pre style="background:#0f172a; color:#cbd5e1; padding:1.25rem; border-radius:0.5rem; line-height:1.4; overflow-x:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px;">
            ┌──────────────────────────────────────────────────────────────┐
-           │                       YOUR USE CASES                         │
+           │                       <span style="color:#fde68a">YOUR USE CASES</span>                         │
            │             (the tools your team already uses)               │
            └──────────────────────────────────────────────────────────────┘
                   │           │          │             │            │
                   ▼           ▼          ▼             ▼            ▼
             ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-            │  Cursor  │ │  Claude  │ │  Aider   │ │  Custom  │ │   curl   │
-            │          │ │   Code   │ │          │ │ Python   │ │  scripts │
+            │  <span style="color:#fcd34d">Cursor</span>  │ │  <span style="color:#fcd34d">Claude</span>  │ │  <span style="color:#fcd34d">Aider</span>   │ │  Custom  │ │   curl   │
+            │          │ │   <span style="color:#fcd34d">Code</span>   │ │          │ │ Python   │ │  scripts │
             │          │ │          │ │          │ │   SDK    │ │          │
             └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
                  │  OpenAI    │ Anthropic  │  OpenAI    │  Either    │  HTTP
                  └────────────┴────────────┴────────────┴────────────┘
                                           │
-                                          │   ONE URL · ONE API KEY
+                                          │   <span style="color:#fde68a">ONE URL · ONE API KEY</span>
                                           ▼
-      ┌──────────────────────────────────────────────────────────────────────┐
-      │                  ⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢                              │
-      │                  (this is what we built)                             │
-      │  ────────────────────────────────────────────────────────────────    │
-      │  Gateway     OpenAI + Anthropic on /v1/chat/completions              │
+<span style="color:#6ee7b7">      ┌──────────────────────────────────────────────────────────────────────┐
+      │                  <span style="color:#a7f3d0; font-weight:bold">⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢</span>                              │
+      │                  <span style="color:#34d399">(this is what we built)</span>                             │
+      │  <span style="color:#10b981">────────────────────────────────────────────────────────────────</span>    │
+      │  <span style="color:#a7f3d0; font-weight:bold">Gateway</span>     OpenAI + Anthropic on /v1/chat/completions              │
       │              per-user keys · daily quotas · full audit log           │
       │              admin dashboard at :8080                                │
       │                                                                      │
-      │  Router      Same model on N nodes  → load-balance                   │
+      │  <span style="color:#a7f3d0; font-weight:bold">Router</span>      Same model on N nodes  → load-balance                   │
       │              Different models per node → route by placement          │
       │              Model bigger than any node → split via llama.cpp-RPC    │
       │              Claude / GPT requested → proxy to vendor                │
-      └─────────────────────────────┬────────────────────────────────────────┘
+      └─────────────────────────────┬────────────────────────────────────────┘</span>
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
        ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-       │   Engines   │       │   Engines   │       │   Egress    │
-       │  (any mix)  │       │  (any mix)  │       │   proxy     │
-       │  • Ollama   │       │  • Ollama   │       │             │
-       │  • vLLM     │       │  • vLLM     │       │ api.anthro- │
-       │  • MLX-LM   │       │  • MLX-LM   │       │ pic.com     │
-       │  • llama.cpp│       │  • llama.cpp│       │ api.openai  │
+       │   <span style="color:#93c5fd">Engines</span>   │       │   <span style="color:#93c5fd">Engines</span>   │       │   <span style="color:#f9a8d4">Egress</span>    │
+       │  (any mix)  │       │  (any mix)  │       │   <span style="color:#f9a8d4">proxy</span>     │
+       │  • <span style="color:#93c5fd">Ollama</span>   │       │  • <span style="color:#93c5fd">Ollama</span>   │       │             │
+       │  • <span style="color:#93c5fd">vLLM</span>     │       │  • <span style="color:#93c5fd">vLLM</span>     │       │ api.anthro- │
+       │  • <span style="color:#93c5fd">MLX-LM</span>   │       │  • <span style="color:#93c5fd">MLX-LM</span>   │       │ pic.com     │
+       │  • <span style="color:#93c5fd">llama.cpp</span>│       │  • <span style="color:#93c5fd">llama.cpp</span>│       │ api.openai  │
        └──────┬──────┘       └──────┬──────┘       │ .com        │
               │                     │              └──────┬──────┘
               ▼                     ▼                     ▼
       ┌──────────────────────────────────────────────────────────────────────┐
-      │                    UNDERLYING LLMs / WEIGHTS                         │
+      │                    <span style="color:#fde68a">UNDERLYING LLMs / WEIGHTS</span>                         │
       │                                                                      │
-      │   YOUR HARDWARE                              VENDOR APIs             │
+      │   <span style="color:#86efac">YOUR HARDWARE</span>                              <span style="color:#fca5a5">VENDOR APIs</span>             │
       │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
       │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
       │                                                                      │
@@ -68,7 +68,7 @@
       │   + any HuggingFace or Ollama model.          you pay vendors only  │
       │                                               when YOU chose to.    │
       └──────────────────────────────────────────────────────────────────────┘
-```
+</pre>
 
 **One-sentence version:** Flock is the layer that lets your tools talk to *any* LLM — open-weight on your hardware, or hosted Claude / GPT — through **one URL and one API key**, with the team controls (quotas, audit, per-user keys) that the raw vendor APIs don't give you.
 
