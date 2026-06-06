@@ -999,10 +999,10 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
     <section id="models-guide" class="anchor-pad py-20 bg-white">
       <div class="max-w-6xl mx-auto px-6">
         <div class="max-w-3xl mb-12">
-          <span class="pill bg-emerald-100 text-emerald-700">22 curated models</span>
-          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Qwen 3.6, gpt-oss, Llama 4, Gemma 4, DeepSeek V4, Kimi K2.6…</h2>
+          <span class="pill bg-emerald-100 text-emerald-700">26 curated models</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Qwen 3.6, gpt-oss, Llama 4, Gemma 4, DeepSeek V4, Kimi K2.6, Nemotron 3 Ultra…</h2>
           <p class="mt-4 text-lg text-slate-600 leading-relaxed">
-            Flock ships a curated catalog of 22 open-weight models spanning 1 GB edge models to 1T-parameter sharded MoE frontier. Use any of them, install any other Ollama model, or wire up vLLM / MLX-LM for higher throughput.
+            Flock ships a curated catalog of 26 open-weight models spanning 1 GB edge MoEs to 550 B hybrid Mamba-Transformers and 1 T-parameter sharded frontier. Use any of them, install any other Ollama model, or wire up vLLM / MLX-LM for higher throughput.
           </p>
         </div>
 
@@ -1024,9 +1024,11 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
               <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Small — 8–16 GB box</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3">code completion + chat</td><td class="p-3">4.7 GB</td><td class="p-3">8 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">deepseek-r1-8b</td><td class="p-3">distilled reasoning ("thinking")</td><td class="p-3">4.9 GB</td><td class="p-3">12 GB</td></tr>
+              <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">lfm2.5-8b-a1b ⭐</td><td class="p-3">best on-device MoE (1 B active)</td><td class="p-3">5.0 GB</td><td class="p-3">8 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen3-8b</td><td class="p-3">general chat, balanced</td><td class="p-3">5.2 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">mellum2-12b</td><td class="p-3">JetBrains coder MoE (2.5 B active, Apache-2.0)</td><td class="p-3">7.0 GB</td><td class="p-3">12 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">mistral-nemo-12b</td><td class="p-3">128 K context, multilingual</td><td class="p-3">7.1 GB</td><td class="p-3">12 GB</td></tr>
-              <tr><td class="p-3 font-mono text-xs">gemma4-12b</td><td class="p-3">256 K context, multilingual</td><td class="p-3">7.6 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">gemma4-12b</td><td class="p-3">encoder-free any-to-any (text/image/audio/video)</td><td class="p-3">7.6 GB</td><td class="p-3">12 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen3-14b</td><td class="p-3">more capable Qwen 3 chat</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3">code + agent (proven)</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">phi-4-14b</td><td class="p-3">strong reasoning per byte</td><td class="p-3">9.1 GB</td><td class="p-3">12 GB</td></tr>
@@ -1045,7 +1047,9 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
               <tr><td class="p-3 font-mono text-xs">llama-4-scout</td><td class="p-3">10 M context, multimodal (109 B MoE)</td><td class="p-3">67 GB</td><td class="p-3">80 GB</td></tr>
 
               <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Frontier — multi-machine sharded</td></tr>
+              <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">step-3.7-flash-sharded ⭐</td><td class="p-3">198 B MoE / 11 B active VLM — Apache-2.0, ~400 tok/s</td><td class="p-3">100 GB</td><td class="p-3">128 GB</td></tr>
               <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">deepseek-v4-flash-sharded ⭐</td><td class="p-3">284 B MoE / 13 B active — cost-efficient frontier</td><td class="p-3">150 GB</td><td class="p-3">160 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">nemotron-3-ultra-sharded</td><td class="p-3">550 B hybrid Mamba-MoE / 55 B active — 1 M context, MMLU 89.1</td><td class="p-3">280 GB</td><td class="p-3">320 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">glm-5.1-sharded</td><td class="p-3">754 B MoE / 40 B active — best agentic coder</td><td class="p-3">400 GB</td><td class="p-3">416 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">kimi-k2.6-sharded</td><td class="p-3">1 T MoE / 32 B active — # 1 open coding</td><td class="p-3">500 GB</td><td class="p-3">512 GB</td></tr>
             </tbody>

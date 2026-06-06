@@ -366,21 +366,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Flock ships a curated catalog of **22 open-weight models** in `catalog/*.yaml`, spanning everything from 1B edge models to 1T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
+Flock ships a curated catalog of **26 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
 
-> 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
+> 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/audio/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 
 ### Shipped catalog at a glance
 
 | Tier | Models |
 |---|---|
 | **Edge (≤2 GB RAM)** | `llama-3.2-1b`, `llama-3.2-3b` |
-| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `qwen3-8b`, `mistral-nemo-12b`, `gemma4-12b`, `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
+| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `lfm2.5-8b-a1b` ⭐, `qwen3-8b`, `mellum2-12b`, `mistral-nemo-12b`, `gemma4-12b` (multimodal), `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
 | **Consumer big (16-32 GB)** | `gpt-oss-20b` ⭐, `qwen3.6-27b` ⭐, `gemma4-26b`, `qwen3-30b`, `qwen3-coder-30b`, `qwen-coder-32b` |
 | **Single 80 GB GPU** | `llama-3.3-70b-sharded`, `gpt-oss-120b`, `llama-4-scout` (10M ctx, multimodal) |
-| **Sharded frontier (≥160 GB combined)** | `deepseek-v4-flash-sharded`, `glm-5.1-sharded`, `kimi-k2.6-sharded` |
+| **Sharded frontier (≥128 GB combined)** | `step-3.7-flash-sharded` ⭐ (Apache-2.0), `deepseek-v4-flash-sharded`, `nemotron-3-ultra-sharded` (Mamba-MoE, 1M ctx), `glm-5.1-sharded`, `kimi-k2.6-sharded` |
 
-⭐ = current top consumer pick (June 2026).
+⭐ = current top picks (June 2026).
 
 Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec.
 

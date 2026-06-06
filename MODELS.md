@@ -17,37 +17,41 @@ Every model in Flock's catalog, with step-by-step install + use instructions for
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row.
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **26 models** as of v0.2.1.
 
-| Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Long ctx | License     | Notes                                  |
-| ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :------: | ----------- | -------------------------------------- |
-| **Edge — laptop / Raspberry-Pi-ish** |  |  |  |  |  |  |  |  |  |
-| `llama-3.2-1b`                 | 1.3 GB | 2 GB    |  •   |      |           |        |          | Llama 3.2   | Smoke test only                        |
-| `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |          | Llama 3.2   | Edge default                           |
-| **Small — 8-16 GB box**        |        |         |      |      |           |        |          |             |                                        |
-| `qwen-coder-7b`                | 4.7 GB | 8 GB    |  ●   |  ●   |           |        |          | Apache-2.0  | FIM-capable, older                     |
-| `deepseek-r1-8b`               | 4.9 GB | 12 GB   |  ●   |      |    ●●     |        |          | MIT         | Distilled reasoning                    |
-| `qwen3-8b`                     | 5.2 GB | 12 GB   |  ●   |      |           |        |          | Apache-2.0  | General chat                           |
-| `mistral-nemo-12b`             | 7.1 GB | 12 GB   |  ●   |      |           |        |    ●●    | Apache-2.0  | 128K context                           |
-| `gemma4-12b`                   | 7.6 GB | 12 GB   |  ●   |      |           |        |    ●●    | Gemma       | 256K ctx, multilingual                 |
-| `qwen3-14b`                    | 9.0 GB | 16 GB   |  ●   |      |           |        |          | Apache-2.0  | More capable Qwen3 chat                |
-| `qwen-coder-14b` ⭐             | 9.0 GB | 16 GB   |  ●   |  ●●  |           |        |          | Apache-2.0  | Best 16 GB code+agent pick             |
-| `phi-4-14b`                    | 9.1 GB | 12 GB   |  ●   |      |    ●●     |        |          | MIT         | Strong reasoning per byte              |
-| **Mid — 24-32 GB box**         |        |         |      |      |           |        |          |             |                                        |
-| `gpt-oss-20b` ⭐                | 14 GB  | 16 GB   |  ●   |  ●   |    ●●     |        |    ●     | Apache-2.0  | OpenAI open-weight, adjustable thinking |
-| `qwen3.6-27b` ⭐                | 17 GB  | 24 GB   |  ●●  |  ●●  |    ●      |        |    ●●    | Apache-2.0  | 77 % SWE-bench, top consumer pick      |
-| `gemma4-26b`                   | 18 GB  | 24 GB   |  ●   |      |           |   ●    |    ●●    | Gemma       | MoE 4B-active, multimodal              |
-| `qwen3-30b`                    | 19 GB  | 24 GB   |  ●●  |      |           |        |    ●●    | Apache-2.0  | MoE 3B-active, very fast               |
-| `qwen3-coder-30b`              | 19 GB  | 24 GB   |  ●   |  ●●  |           |        |    ●●    | Apache-2.0  | MoE 3.3B-active coder                  |
-| `qwen-coder-32b`               | 20 GB  | 32 GB   |  ●   |  ●●  |           |        |          | Apache-2.0  | Dense, older but proven                |
-| **Power user — single 80 GB GPU / sharded** |  |  |  |  |  |  |  |  |  |
-| `llama-3.3-70b-sharded`        | 43 GB  | 48 GB   |  ●●  |      |           |        |    ●●    | Llama 3.3   | Needs ≥2 nodes                         |
-| `gpt-oss-120b`                 | 65 GB  | 80 GB   |  ●●  |  ●   |    ●●●    |        |    ●     | Apache-2.0  | ≈ o4-mini reasoning, single H100       |
-| `llama-4-scout`                | 67 GB  | 80 GB   |  ●●  |      |           |   ●●   |   ●●●    | Llama 4     | 10M context, multimodal                |
-| **Frontier — multi-machine sharded** |        |         |      |      |           |        |          |             |                                        |
-| `deepseek-v4-flash-sharded` ⭐  | 150 GB | 160 GB  |  ●●  |  ●●  |    ●●●    |        |    ●●    | MIT         | 13B active = fast at frontier quality  |
-| `glm-5.1-sharded`              | 400 GB | 416 GB  |  ●●  |  ●●● |    ●●     |        |    ●●    | MIT         | Best agentic coder                     |
-| `kimi-k2.6-sharded`            | 500 GB | 512 GB  |  ●●  |  ●●● |    ●●     |        |    ●●    | Mod. MIT    | #1 open coding benchmarks              |
+| Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
+| ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
+| **Edge — laptop / Raspberry-Pi-ish** |  |  |  |  |  |  |  |  |  |  |
+| `llama-3.2-1b`                 | 1.3 GB | 2 GB    |  •   |      |           |        |       |          | Llama 3.2   | Smoke test only                        |
+| `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |       |          | Llama 3.2   | Edge default                           |
+| **Small — 8-16 GB box**        |        |         |      |      |           |        |       |          |             |                                        |
+| `qwen-coder-7b`                | 4.7 GB | 8 GB    |  ●   |  ●   |           |        |       |          | Apache-2.0  | FIM-capable, older                     |
+| `deepseek-r1-8b`               | 4.9 GB | 12 GB   |  ●   |      |    ●●     |        |       |          | MIT         | Distilled reasoning                    |
+| `lfm2.5-8b-a1b` ⭐              | 5.0 GB | 8 GB    |  ●   |      |    ●●     |        |       |    ●●    | LFM Open    | Best on-device MoE (1B active)         |
+| `qwen3-8b`                     | 5.2 GB | 12 GB   |  ●   |      |           |        |       |          | Apache-2.0  | General chat                           |
+| `mellum2-12b`                  | 7.0 GB | 12 GB   |  ●   |  ●●  |    ●●     |        |       |          | Apache-2.0  | JetBrains MoE coder (2.5B active)      |
+| `mistral-nemo-12b`             | 7.1 GB | 12 GB   |  ●   |      |           |        |       |    ●●    | Apache-2.0  | 128K context                           |
+| `gemma4-12b`                   | 7.6 GB | 12 GB   |  ●   |      |           |   ●●   |   ●   |    ●●    | Gemma       | Encoder-free any-to-any (T/I/A/V)      |
+| `qwen-coder-14b`               | 9.0 GB | 16 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense code+agent                       |
+| `qwen3-14b`                    | 9.0 GB | 16 GB   |  ●   |      |           |        |       |          | Apache-2.0  | More capable Qwen3 chat                |
+| `phi-4-14b`                    | 9.1 GB | 12 GB   |  ●   |      |    ●●     |        |       |          | MIT         | Strong reasoning per byte              |
+| **Mid — 24-32 GB box**         |        |         |      |      |           |        |       |          |             |                                        |
+| `gpt-oss-20b` ⭐                | 14 GB  | 16 GB   |  ●   |  ●   |    ●●     |        |       |    ●     | Apache-2.0  | OpenAI open-weight, adjustable thinking |
+| `qwen3.6-27b` ⭐                | 17 GB  | 24 GB   |  ●●  |  ●●  |    ●      |        |       |    ●●    | Apache-2.0  | 77 % SWE-bench, top consumer pick      |
+| `gemma4-26b`                   | 18 GB  | 24 GB   |  ●   |      |           |   ●    |       |    ●●    | Gemma       | MoE 4B-active, multimodal              |
+| `qwen3-30b`                    | 19 GB  | 24 GB   |  ●●  |      |           |        |       |    ●●    | Apache-2.0  | MoE 3B-active, very fast               |
+| `qwen3-coder-30b`              | 19 GB  | 24 GB   |  ●   |  ●●  |           |        |       |    ●●    | Apache-2.0  | MoE 3.3B-active coder                  |
+| `qwen-coder-32b`               | 20 GB  | 32 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense, older but proven                |
+| **Power user — single 80 GB GPU / sharded** |  |  |  |  |  |  |  |  |  |  |
+| `llama-3.3-70b-sharded`        | 43 GB  | 48 GB   |  ●●  |      |           |        |       |    ●●    | Llama 3.3   | Needs ≥2 nodes                         |
+| `gpt-oss-120b`                 | 65 GB  | 80 GB   |  ●●  |  ●   |    ●●●    |        |       |    ●     | Apache-2.0  | ≈ o4-mini reasoning, single H100       |
+| `llama-4-scout`                | 67 GB  | 80 GB   |  ●●  |      |           |   ●●   |       |   ●●●    | Llama 4     | 10M context, multimodal                |
+| **Frontier — multi-machine sharded** |        |         |      |      |           |        |       |          |             |                                        |
+| `step-3.7-flash-sharded` ⭐     | 100 GB | 128 GB  |  ●●  |  ●●  |    ●●     |   ●●   |       |    ●●    | Apache-2.0  | 11B active VLM, fastest frontier MoE   |
+| `deepseek-v4-flash-sharded` ⭐  | 150 GB | 160 GB  |  ●●  |  ●●  |    ●●●    |        |       |    ●●    | MIT         | 13B active = fast at frontier quality  |
+| `nemotron-3-ultra-sharded`     | 280 GB | 320 GB  |  ●●  |  ●●  |    ●●●    |        |       |   ●●●    | NVIDIA Open | Hybrid Mamba-MoE, 1M ctx, MMLU 89.1    |
+| `glm-5.1-sharded`              | 400 GB | 416 GB  |  ●●  |  ●●● |    ●●     |        |       |    ●●    | MIT         | Best agentic coder                     |
+| `kimi-k2.6-sharded`            | 500 GB | 512 GB  |  ●●  |  ●●● |    ●●     |        |       |    ●●    | Mod. MIT    | #1 open coding benchmarks              |
 
 **Legend** — • basic / ● good / ●● strong / ●●● best-in-tier · ⭐ recommended starting point
 
@@ -55,11 +59,13 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 
 **Quick rules of thumb:**
 - **I just want to try Flock** → `llama-3.2-3b` (2 GB, runs anywhere).
-- **My laptop coding agent** → `qwen-coder-14b` if 16 GB box; `qwen3-coder-30b` if 24 GB.
+- **Best on-device edge MoE** → `lfm2.5-8b-a1b` — only 1 B active, MATH500 88.8, MLX-ready.
+- **My laptop coding agent** → `mellum2-12b` (Apache-2.0, MoE, 2.5 B active) on 12 GB or `qwen3-coder-30b` on 24 GB.
+- **Multimodal on a laptop (text/image/audio/video)** → `gemma4-12b` — encoder-free unified architecture.
 - **Best consumer general model** → `qwen3.6-27b` (24 GB) or `gpt-oss-20b` (16 GB).
 - **Reasoning-heavy work** → `gpt-oss-20b` (small) or `gpt-oss-120b` (big).
 - **My team has 4 Mac Studios** → install the same model (e.g. `qwen3.6-27b`) on each — Flock load-balances automatically. No sharding needed for throughput.
-- **A model bigger than any one machine** → sharded tier. Start with `deepseek-v4-flash-sharded`.
+- **A model bigger than any one machine** → sharded tier. Start with `step-3.7-flash-sharded` (Apache-2.0) or `deepseek-v4-flash-sharded` (MIT).
 
 For the full per-model walkthrough (the 9 original entries below have detailed install + client snippets), keep scrolling. For the 13 newer entries, run `flock model info <id>` — same fields as the table above, plus engine compatibility.
 

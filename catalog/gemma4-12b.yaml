@@ -1,13 +1,13 @@
 id: gemma4-12b
-display_name: Google Gemma 4 12B
+display_name: Google Gemma 4 12B (encoder-free any-to-any, multimodal)
 source:
   type: ollama
   ollama_name: gemma4:12b
 size_bytes: 7600000000
 quant: q4_k_m
 context_window: 262144
-capabilities: [chat, tools]
+capabilities: [chat, tools, vision, audio]
 recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:
   min_ram_gb: 12
-tags: [general, multilingual, google]
+tags: [general, multilingual, google, multimodal, audio, video]
