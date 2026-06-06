@@ -29,9 +29,9 @@ type InviteInput struct {
 // transmit the invite: the new token (shown plaintext exactly once), the
 // store record, and a rendered share card per requested client.
 type InviteResult struct {
-	Token    string                 // plaintext API key — sk-orc-…
-	Record   store.APIKey           // persisted store record
-	BaseURL  string                 // normalized (no trailing slash)
+	Token    string       // plaintext API key — sk-orc-…
+	Record   store.APIKey // persisted store record
+	BaseURL  string       // normalized (no trailing slash)
 	Snippets map[string]*ConnectOutput
 	// ClientsOrder is the client IDs in the order the caller asked for
 	// them (so the rendered share card is deterministic and ordered).

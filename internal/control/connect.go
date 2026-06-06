@@ -52,11 +52,11 @@ type ConnectInput struct {
 
 // ConnectOutput is the rendered snippet plus metadata about the client.
 type ConnectOutput struct {
-	Client      Client
-	Snippet     string
-	BaseURL     string
-	Token       string
-	Model       string
+	Client  Client
+	Snippet string
+	BaseURL string
+	Token   string
+	Model   string
 }
 
 // ConnectSnippet renders the embedded template for the named client with
