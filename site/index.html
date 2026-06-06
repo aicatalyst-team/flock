@@ -999,10 +999,10 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
     <section id="models-guide" class="anchor-pad py-20 bg-white">
       <div class="max-w-6xl mx-auto px-6">
         <div class="max-w-3xl mb-12">
-          <span class="pill bg-emerald-100 text-emerald-700">Use any model</span>
-          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Use Qwen, Llama, DeepSeek — or anything in Ollama</h2>
+          <span class="pill bg-emerald-100 text-emerald-700">22 curated models</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Qwen 3.6, gpt-oss, Llama 4, Gemma 4, DeepSeek V4, Kimi K2.6…</h2>
           <p class="mt-4 text-lg text-slate-600 leading-relaxed">
-            Flock ships a curated catalog with the most useful local models. You can also use any model Ollama supports via pass-through, or wire up vLLM / MLX-LM for higher throughput.
+            Flock ships a curated catalog of 22 open-weight models spanning 1 GB edge models to 1T-parameter sharded MoE frontier. Use any of them, install any other Ollama model, or wire up vLLM / MLX-LM for higher throughput.
           </p>
         </div>
 
@@ -1012,20 +1012,42 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
               <tr class="text-xs text-slate-600 uppercase tracking-wide">
                 <th class="text-left p-3 font-semibold">Catalog id</th>
                 <th class="text-left p-3 font-semibold">What it's for</th>
-                <th class="text-left p-3 font-semibold">RAM</th>
-                <th class="text-left p-3 font-semibold">Engine name (Ollama)</th>
+                <th class="text-left p-3 font-semibold">Size</th>
+                <th class="text-left p-3 font-semibold">Min RAM</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              <tr><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3">smoke test, fastest</td><td class="p-3">2 GB</td><td class="p-3 font-mono text-xs">llama3.2:1b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">llama-3.2-3b</td><td class="p-3">small fast chat</td><td class="p-3">4 GB</td><td class="p-3 font-mono text-xs">llama3.2:3b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3">code completion + chat</td><td class="p-3">8 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:7b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3">better code + agent</td><td class="p-3">16 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:14b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">qwen-coder-32b</td><td class="p-3">strong code agent (laptop max)</td><td class="p-3">32 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:32b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">qwen3-8b</td><td class="p-3">general chat, balanced</td><td class="p-3">12 GB</td><td class="p-3 font-mono text-xs">qwen3:8b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">qwen3-14b</td><td class="p-3">general chat, more capable</td><td class="p-3">16 GB</td><td class="p-3 font-mono text-xs">qwen3:14b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">deepseek-r1-8b</td><td class="p-3">reasoning ("thinking")</td><td class="p-3">12 GB</td><td class="p-3 font-mono text-xs">deepseek-r1:8b</td></tr>
-              <tr><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3">frontier, split across machines</td><td class="p-3">48+ GB total</td><td class="p-3 font-mono text-xs">sharded llama.cpp</td></tr>
+              <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Edge — laptop</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3">smoke test, fastest</td><td class="p-3">1.3 GB</td><td class="p-3">2 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-3.2-3b</td><td class="p-3">small fast chat</td><td class="p-3">2.0 GB</td><td class="p-3">4 GB</td></tr>
+
+              <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Small — 8–16 GB box</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3">code completion + chat</td><td class="p-3">4.7 GB</td><td class="p-3">8 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">deepseek-r1-8b</td><td class="p-3">distilled reasoning ("thinking")</td><td class="p-3">4.9 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-8b</td><td class="p-3">general chat, balanced</td><td class="p-3">5.2 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">mistral-nemo-12b</td><td class="p-3">128 K context, multilingual</td><td class="p-3">7.1 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">gemma4-12b</td><td class="p-3">256 K context, multilingual</td><td class="p-3">7.6 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-14b</td><td class="p-3">more capable Qwen 3 chat</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3">code + agent (proven)</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">phi-4-14b</td><td class="p-3">strong reasoning per byte</td><td class="p-3">9.1 GB</td><td class="p-3">12 GB</td></tr>
+
+              <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Mid — 24–32 GB box</td></tr>
+              <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">gpt-oss-20b ⭐</td><td class="p-3">OpenAI open-weight; adjustable thinking</td><td class="p-3">14 GB</td><td class="p-3">16 GB</td></tr>
+              <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">qwen3.6-27b ⭐</td><td class="p-3">77 % SWE-bench; top consumer pick</td><td class="p-3">17 GB</td><td class="p-3">24 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">gemma4-26b</td><td class="p-3">MoE 4 B active; multimodal vision</td><td class="p-3">18 GB</td><td class="p-3">24 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-30b</td><td class="p-3">MoE 3 B active; very fast</td><td class="p-3">19 GB</td><td class="p-3">24 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-coder-30b</td><td class="p-3">MoE 3.3 B active code agent</td><td class="p-3">19 GB</td><td class="p-3">24 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-32b</td><td class="p-3">dense code agent (older, proven)</td><td class="p-3">20 GB</td><td class="p-3">32 GB</td></tr>
+
+              <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Power user — single 80 GB GPU / 2-node sharded</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3">frontier-ish, ≥ 2 nodes</td><td class="p-3">43 GB</td><td class="p-3">48 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">gpt-oss-120b</td><td class="p-3">≈ o4-mini reasoning, single H100</td><td class="p-3">65 GB</td><td class="p-3">80 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-4-scout</td><td class="p-3">10 M context, multimodal (109 B MoE)</td><td class="p-3">67 GB</td><td class="p-3">80 GB</td></tr>
+
+              <tr class="bg-slate-100"><td colspan="4" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Frontier — multi-machine sharded</td></tr>
+              <tr class="bg-emerald-50"><td class="p-3 font-mono text-xs">deepseek-v4-flash-sharded ⭐</td><td class="p-3">284 B MoE / 13 B active — cost-efficient frontier</td><td class="p-3">150 GB</td><td class="p-3">160 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">glm-5.1-sharded</td><td class="p-3">754 B MoE / 40 B active — best agentic coder</td><td class="p-3">400 GB</td><td class="p-3">416 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">kimi-k2.6-sharded</td><td class="p-3">1 T MoE / 32 B active — # 1 open coding</td><td class="p-3">500 GB</td><td class="p-3">512 GB</td></tr>
             </tbody>
           </table>
         </div>
@@ -1033,23 +1055,23 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
         <div class="mt-8 grid md:grid-cols-2 gap-4">
           <div class="bg-slate-900 text-slate-100 rounded-lg p-5 font-mono text-xs leading-relaxed overflow-x-auto">
 <span class="text-slate-500"># Install a catalog model</span>
-$ flock model add qwen-coder-14b
+$ flock model add qwen3.6-27b
 
 <span class="text-slate-500"># Use it via the API</span>
 $ curl :8080/v1/chat/completions \
     -H 'Authorization: Bearer sk-orc-...' \
-    -d '{"model":"qwen-coder-14b","messages":[…]}'
+    -d '{"model":"qwen3.6-27b","messages":[…]}'
 
 <span class="text-slate-500"># Or in Claude Code</span>
-$ export ANTHROPIC_MODEL=qwen-coder-14b
+$ export ANTHROPIC_MODEL=qwen3.6-27b
 $ claude</div>
 
           <div class="bg-slate-900 text-slate-100 rounded-lg p-5 font-mono text-xs leading-relaxed overflow-x-auto">
 <span class="text-slate-500"># Use any Ollama model (no catalog entry needed)</span>
-$ ollama pull mistral-nemo:12b
+$ ollama pull qwen3:0.6b
 $ curl :8080/v1/chat/completions \
     -H 'Authorization: Bearer sk-orc-...' \
-    -d '{"model":"mistral-nemo:12b","messages":[…]}'
+    -d '{"model":"qwen3:0.6b","messages":[…]}'
 
 <span class="text-slate-500"># Or swap engines entirely</span>
 $ export FLOCK_ENGINE=vllm
@@ -1058,28 +1080,28 @@ $ flock up</div>
         </div>
 
         <p class="mt-6 text-sm text-slate-500 text-center">
-          For the <strong>complete per-model baby-sit guide</strong> — system requirements, performance per platform, install + use snippets for every client (curl / Cursor / Claude Code / SDKs) — see <a href="https://github.com/hadihonarvar/flock/blob/main/MODELS.md" class="underline font-semibold">MODELS.md</a>.
+          For the <strong>complete per-model walkthrough</strong> — picker table with code/chat/reasoning/vision ratings, install + use snippets for every client (curl / Cursor / Claude Code / SDKs) — see <a href="https://github.com/hadihonarvar/flock/blob/main/MODELS.md" class="underline font-semibold">MODELS.md</a>.
         </p>
 
         <div class="mt-10 grid md:grid-cols-3 gap-4">
           <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
             <div class="text-xs uppercase tracking-wide text-emerald-600 font-semibold mb-2">Start here</div>
-            <div class="font-semibold mb-2">qwen-coder-14b ⭐</div>
-            <p class="text-sm text-slate-600 leading-relaxed">The single best default if you have ≥16 GB RAM. Strong code + agent capability. Works great with Claude Code and Cursor.</p>
-            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add qwen-coder-14b</pre>
+            <div class="font-semibold mb-2">qwen3.6-27b ⭐</div>
+            <p class="text-sm text-slate-600 leading-relaxed">The single best default if you have ≥ 24 GB RAM. 77 % SWE-bench, Apache-2.0, strong code + agent. Works great with Claude Code and Cursor.</p>
+            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add qwen3.6-27b</pre>
           </div>
           <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
             <div class="text-xs uppercase tracking-wide text-blue-600 font-semibold mb-2">Tight on RAM</div>
-            <div class="font-semibold mb-2">qwen-coder-7b</div>
-            <p class="text-sm text-slate-600 leading-relaxed">Fits an 8 GB MacBook Air. Strong for code completion + short chats. Good Cursor / Continue.dev autocomplete backend.</p>
-            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add qwen-coder-7b</pre>
+            <div class="font-semibold mb-2">gpt-oss-20b</div>
+            <p class="text-sm text-slate-600 leading-relaxed">OpenAI's open-weight model, Apache-2.0, adjustable reasoning effort, fits a 16 GB box. ≈ o3-mini quality on reasoning benchmarks.</p>
+            <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock model add gpt-oss-20b</pre>
           </div>
           <div class="bg-slate-50 border border-slate-200 rounded-lg p-5">
             <div class="text-xs uppercase tracking-wide text-purple-600 font-semibold mb-2">Frontier tier</div>
-            <div class="font-semibold mb-2">llama-3.3-70b-sharded</div>
-            <p class="text-sm text-slate-600 leading-relaxed">GPT-4 / Sonnet quality, split across 2+ machines via llama.cpp RPC. For 48+ GB combined memory across the cluster.</p>
+            <div class="font-semibold mb-2">deepseek-v4-flash-sharded</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Frontier reasoning quality at consumer cost — 284 B MoE / 13 B active means fast inference. Splits cleanly across 2 nodes via llama.cpp RPC.</p>
             <pre class="mt-3 font-mono text-xs bg-slate-900 text-emerald-300 p-2 rounded overflow-x-auto">flock shard create \
-  llama-3.3-70b-sharded 2</pre>
+  deepseek-v4-flash-sharded 2</pre>
           </div>
         </div>
       </div>
