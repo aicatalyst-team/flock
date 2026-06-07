@@ -247,8 +247,8 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 
 #### Out of scope for v0.4
 
-- Coordinator on a worker (always on the leader today).
-- Automatic GGUF download to workers (the GGUF must already be on the leader at `source.path`).
+- The coordinator (`llama-server`) is placed on the highest-RAM host in the shard set — by default the strongest worker, not the leader. Override with `FLOCK_COORDINATOR_NODE=<node_id>` (or `local` to force leader). When the coordinator runs on a worker it's launched via the same `/v1/process/start` endpoint used for `rpc-server`, and the leader's router dials it at `<worker-address>:<coord_port>`. Single-machine sharding still pins the coordinator to the local supervisor.
+- Automatic GGUF **download** to the leader from upstream (the GGUF must still exist on the leader at `source.path` before `flock shard create` runs). **Distribution from leader to workers is now automatic** — `CreateSharded` calls the worker's `/v1/process/file` (HEAD by sha256) and uploads via `/v1/process/upload` when missing. Upload writes to `storage.models_dir/<basename>` on the worker, verified by sha256.
 - Live shard migration / rebalancing.
 - Dynamic shard count change.
 

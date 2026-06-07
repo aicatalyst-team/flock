@@ -91,7 +91,15 @@ func cmdJoin(args []string) {
 	// Worker HTTP server — leader will call into here for inference AND
 	// for launching/stopping shard processes (rpc-server etc).
 	sup := agent.NewSupervisor(log)
-	srv := &agent.Server{Engine: eng, Token: token, Supervisor: sup}
+	srv := &agent.Server{
+		Engine:     eng,
+		Token:      token,
+		Supervisor: sup,
+		// Models dir is shared with local engine storage — leader's GGUF
+		// distribution writes here under sha256-verified filenames so
+		// sharded models don't require manually scp'd weights.
+		ModelsDir: cfg.Storage.ModelsDir,
+	}
 	defer sup.StopAll()
 
 	ok(os.Stdout, "joining cluster at %s as %s", leader, nodeID)

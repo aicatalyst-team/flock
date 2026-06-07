@@ -699,6 +699,7 @@ observability:
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
 | `FLOCK_CATALOG_DIR` | `catalog_dir` |
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
+| `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 
 ### Not yet configurable (roadmap)
 

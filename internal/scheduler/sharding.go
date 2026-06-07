@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,6 +96,16 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	created := make([]store.Shard, 0, shardCount+1)
 	rpcEndpoints := make([]string, 0, shardCount)
 
+	// For source.type=file (sharded GGUFs), make sure every shard host has
+	// the file locally. Skips upload when the file is already present with
+	// matching sha. Was a v0.5 ask — without this, an admin had to scp the
+	// GGUF onto every machine before `flock shard create` could succeed.
+	if entry.Source.Type == "file" && entry.Source.Path != "" {
+		if err := o.ensureGGUFOnAllWorkers(ctx, workers, entry.Source.Path); err != nil {
+			return fmt.Errorf("distribute GGUF: %w", err)
+		}
+	}
+
 	// Launch one rpc-server per worker.
 	for i, w := range workers {
 		port := rpcPortBase + i
@@ -139,8 +150,20 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		created = append(created, rec)
 	}
 
-	// Launch the coordinator locally.
+	// Pick the coordinator host. Default: whichever node (leader or worker)
+	// has the most RAM, so the strongest box owns the cross-node aggregation
+	// instead of always pinning to the leader. Override via env
+	// FLOCK_COORDINATOR_NODE=<node_id> (use "local" for the leader).
+	coordHost := o.pickCoordinatorHost(ctx, workers)
+
+	// Launch the coordinator. Two branches: on the leader we use the local
+	// supervisor; on a worker we POST /v1/process/start exactly like rpc-server.
 	coordID := fmt.Sprintf("s-%s-coord", safeID(entry.ID))
+	coordHostBind := "127.0.0.1"
+	if !coordHost.local {
+		// Worker coordinator must bind on the network so the leader can dial.
+		coordHostBind = "0.0.0.0"
+	}
 	coordSpec := agent.ProcessSpec{
 		ID:      coordID,
 		Command: "llama-server",
@@ -154,25 +177,53 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 			"-m", entry.Source.Path,
 			"--rpc", strings.Join(rpcEndpoints, ","),
 			"--port", strconv.Itoa(coordPort),
-			"--host", "127.0.0.1",
+			"--host", coordHostBind,
 		},
 		HealthPort: coordPort,
-		HealthHost: "127.0.0.1",
+		HealthHost: "127.0.0.1", // worker probes itself via 127.0.0.1
 	}
-	o.Log.Info("starting coordinator", "model", entry.ID, "port", coordPort, "shards", len(rpcEndpoints))
-	if _, err := o.Supervisor.Start(ctx, coordSpec); err != nil {
-		o.rollback(ctx, created)
-		return fmt.Errorf("launch coordinator: %w", err)
+	o.Log.Info("starting coordinator",
+		"model", entry.ID, "port", coordPort, "shards", len(rpcEndpoints),
+		"host", coordHost.nodeID, "local", coordHost.local)
+
+	if coordHost.local {
+		if _, err := o.Supervisor.Start(ctx, coordSpec); err != nil {
+			o.rollback(ctx, created)
+			return fmt.Errorf("launch coordinator (local): %w", err)
+		}
+	} else {
+		if _, err := o.callWorkerStart(ctx, *coordHost.node, coordSpec); err != nil {
+			o.rollback(ctx, created)
+			return fmt.Errorf("launch coordinator on %s: %w", coordHost.nodeID, err)
+		}
 	}
+
+	// Address the *leader's router* will use to dial the coordinator.
+	// Local: loopback. Remote: the worker's mesh address + the coord port.
+	coordAddr := fmt.Sprintf("127.0.0.1:%d", coordPort)
+	coordNodeID := "local"
+	if !coordHost.local {
+		coordNodeID = coordHost.nodeID
+		host, _, sErr := net.SplitHostPort(coordHost.node.Address)
+		if sErr != nil {
+			host = coordHost.node.Address
+		}
+		coordAddr = fmt.Sprintf("%s:%d", host, coordPort)
+	}
+
 	coordRec := store.Shard{
 		ID: coordID, ModelID: entry.ID, Role: "coordinator",
-		NodeID: "local", Address: fmt.Sprintf("127.0.0.1:%d", coordPort),
+		NodeID: coordNodeID, Address: coordAddr,
 		ProcessID: coordID, Status: "ready",
 		CreatedAt: time.Now(), LastSeen: time.Now(),
 	}
 	if err := o.Store.Shards().Create(ctx, coordRec); err != nil {
 		// coordinator running but not persisted; try to stop + return error
-		_ = o.Supervisor.Stop(coordID)
+		if coordHost.local {
+			_ = o.Supervisor.Stop(coordID)
+		} else {
+			_ = o.callWorkerStop(ctx, *coordHost.node, coordID)
+		}
 		o.rollback(ctx, created)
 		return fmt.Errorf("persist coordinator: %w", err)
 	}
@@ -209,8 +260,19 @@ func (o *Orchestrator) RemoveSharded(ctx context.Context, modelID string) error 
 	for _, s := range shards {
 		switch s.Role {
 		case "coordinator":
-			if err := o.Supervisor.Stop(s.ProcessID); err != nil {
-				o.Log.Warn("coordinator stop failed", "id", s.ID, "err", err)
+			if s.NodeID == "" || s.NodeID == "local" {
+				if err := o.Supervisor.Stop(s.ProcessID); err != nil {
+					o.Log.Warn("coordinator stop failed", "id", s.ID, "err", err)
+				}
+			} else {
+				node, err := o.Store.Nodes().Get(ctx, s.NodeID)
+				if err != nil || node == nil {
+					o.Log.Warn("coordinator's node not found", "id", s.ID, "node", s.NodeID)
+					continue
+				}
+				if err := o.callWorkerStop(ctx, *node, s.ProcessID); err != nil {
+					o.Log.Warn("remote coordinator stop failed", "id", s.ID, "err", err)
+				}
 			}
 		case "rpc":
 			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
@@ -259,7 +321,11 @@ func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 	for _, s := range created {
 		switch s.Role {
 		case "coordinator":
-			_ = o.Supervisor.Stop(s.ProcessID)
+			if s.NodeID == "" || s.NodeID == "local" {
+				_ = o.Supervisor.Stop(s.ProcessID)
+			} else if node, err := o.Store.Nodes().Get(ctx, s.NodeID); err == nil && node != nil {
+				_ = o.callWorkerStop(ctx, *node, s.ProcessID)
+			}
 		case "rpc":
 			node, err := o.Store.Nodes().Get(ctx, s.NodeID)
 			if err == nil && node != nil {
@@ -268,6 +334,49 @@ func (o *Orchestrator) rollback(ctx context.Context, created []store.Shard) {
 		}
 		_ = o.Store.Shards().Delete(ctx, s.ID)
 	}
+}
+
+// coordinatorChoice describes who'll run the llama-server coordinator.
+type coordinatorChoice struct {
+	nodeID string      // "local" for leader, else node row id
+	local  bool        // true when coordinator runs on the leader's supervisor
+	node   *store.Node // populated when local==false; the worker to dial
+}
+
+// pickCoordinatorHost picks the strongest host (by RAM) among workers + the
+// leader to run the llama-server coordinator. Operators can override via
+// env FLOCK_COORDINATOR_NODE=<node_id> ("local" forces leader).
+//
+// Why this exists: the coordinator does the actual layer aggregation across
+// rpc-servers. Pinning it to the leader was the v0.4 default and wasted
+// capacity when a worker had more RAM than the leader.
+func (o *Orchestrator) pickCoordinatorHost(ctx context.Context, workers []store.Node) coordinatorChoice {
+	if override := os.Getenv("FLOCK_COORDINATOR_NODE"); override != "" {
+		if override == "local" {
+			return coordinatorChoice{nodeID: "local", local: true}
+		}
+		for i := range workers {
+			if workers[i].ID == override {
+				w := workers[i]
+				return coordinatorChoice{nodeID: w.ID, node: &w}
+			}
+		}
+		o.Log.Warn("FLOCK_COORDINATOR_NODE not in shard worker set — falling back to default", "want", override)
+	}
+
+	// Default policy: pick the highest-RAM worker; only fall back to the
+	// leader when there are no workers (single-machine sharding test).
+	// Operators who want the leader can set FLOCK_COORDINATOR_NODE=local.
+	if len(workers) == 0 {
+		return coordinatorChoice{nodeID: "local", local: true}
+	}
+	best := workers[0]
+	for _, w := range workers[1:] {
+		if w.RAMGB > best.RAMGB {
+			best = w
+		}
+	}
+	return coordinatorChoice{nodeID: best.ID, node: &best}
 }
 
 // ---- HTTP calls to worker process endpoints ----

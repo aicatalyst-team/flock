@@ -10,10 +10,14 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +29,10 @@ type Server struct {
 	Engine     engines.Engine
 	Token      string // shared secret; same value the leader stores in node.worker_token
 	Supervisor *Supervisor
+	// ModelsDir is the writable root for GGUFs uploaded by the leader's
+	// sharding orchestrator (see /v1/process/upload). If empty, upload is
+	// refused with 503. Set by `flock join` from cfg.Storage.ModelsDir.
+	ModelsDir string
 
 	http *http.Server
 }
@@ -43,6 +51,8 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	mux.HandleFunc("/v1/process/stop", s.auth(s.processStop))
 	mux.HandleFunc("/v1/process/list", s.auth(s.processList))
 	mux.HandleFunc("/v1/process/logs", s.auth(s.processLogs))
+	mux.HandleFunc("/v1/process/file", s.auth(s.fileCheck))    // HEAD: does this GGUF exist with matching sha?
+	mux.HandleFunc("/v1/process/upload", s.auth(s.fileUpload)) // POST: stream a GGUF up
 
 	s.http = &http.Server{
 		Addr:              listen,
@@ -298,6 +308,134 @@ func (s *Server) processLogs(w http.ResponseWriter, r *http.Request) {
 	for _, line := range s.Supervisor.Logs(id, n) {
 		_, _ = io.WriteString(w, line+"\n")
 	}
+}
+
+// fileCheck answers "do you already have this GGUF?". Used by the leader's
+// sharding orchestrator to skip a multi-GB upload when the file is already
+// present on the worker (e.g. the worker was a shard host last time too).
+//
+// Request:  HEAD /v1/process/file?name=<basename>&sha256=<hex>
+// Response: 200 OK with header X-File-Path: <abs path on worker>
+//           404 Not Found    — file missing or sha mismatch
+//           503 if no ModelsDir is configured on this worker
+//
+// `name` must be a bare basename — no path separators. The worker resolves
+// it under ModelsDir/<name> to prevent path-escape attacks even with a
+// trusted leader.
+func (s *Server) fileCheck(w http.ResponseWriter, r *http.Request) {
+	if s.ModelsDir == "" {
+		http.Error(w, "worker has no models_dir configured", http.StatusServiceUnavailable)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	want := strings.ToLower(r.URL.Query().Get("sha256"))
+	if name == "" || want == "" {
+		http.Error(w, "name and sha256 required", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		http.Error(w, "name must be a basename", http.StatusBadRequest)
+		return
+	}
+	path := filepath.Join(s.ModelsDir, name)
+	got, err := sha256File(path)
+	if err != nil || got != want {
+		http.Error(w, "missing or sha mismatch", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("X-File-Path", path)
+	w.WriteHeader(http.StatusOK)
+}
+
+// fileUpload streams a GGUF (or any opaque blob) from the request body into
+// ModelsDir/<name>, verifying sha256 on completion. On mismatch the file is
+// removed and 422 returned.
+//
+// Request:  POST /v1/process/upload?name=<basename>&sha256=<hex>
+//           body: raw file contents (no multipart wrapper — Content-Length
+//                 is the size)
+// Response: 200 OK  {"path": "<abs path>", "sha256": "<hex>", "size": <n>}
+//           422     {"error": "sha mismatch: got X want Y"}
+//           503     if no ModelsDir is configured
+//
+// The file is written to a `.partial` sibling first and renamed on success,
+// so an interrupted upload doesn't leave a partial file the leader might
+// see and skip on the next check.
+func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
+	if s.ModelsDir == "" {
+		http.Error(w, "worker has no models_dir configured", http.StatusServiceUnavailable)
+		return
+	}
+	defer r.Body.Close()
+	name := r.URL.Query().Get("name")
+	want := strings.ToLower(r.URL.Query().Get("sha256"))
+	if name == "" || want == "" {
+		http.Error(w, "name and sha256 required", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		http.Error(w, "name must be a basename", http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(s.ModelsDir, 0o755); err != nil {
+		http.Error(w, "mkdir models_dir: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	finalPath := filepath.Join(s.ModelsDir, name)
+	tmpPath := finalPath + ".partial"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		http.Error(w, "create: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(out, h), r.Body)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		http.Error(w, "write: "+copyErr.Error(), http.StatusBadGateway)
+		return
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		http.Error(w, "close: "+closeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != want {
+		_ = os.Remove(tmpPath)
+		http.Error(w, fmt.Sprintf("sha mismatch: got %s want %s", got, want), http.StatusUnprocessableEntity)
+		return
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"path":   finalPath,
+		"sha256": got,
+		"size":   n,
+	})
+}
+
+// sha256File reads path and returns the hex-encoded sha256, or an error if
+// the file can't be read.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func writeAggregate(w http.ResponseWriter, stream <-chan engines.StreamEvent, model string) {
