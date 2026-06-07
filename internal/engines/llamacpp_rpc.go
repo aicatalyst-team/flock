@@ -1,15 +1,23 @@
-// llama.cpp distributed-inference driver. Lets Flock route requests to a
-// `llama-server` instance that has been launched with `--rpc <backends>`,
-// which in turn shards a single model across multiple machines via
-// `rpc-server` processes.
+// llama.cpp driver. Two modes, one driver:
 //
-// This driver is a thin OpenAI-compatible client (same shape as VLLM/MLX).
-// The sharding orchestrator (`internal/scheduler/sharding.go`) launches
-// `rpc-server` on workers automatically and starts the coordinator
-// `llama-server` on the leader — but you can also run it by hand and
-// just point Flock at the result via `engine.preferred: llamacpp`.
+//   - Single-node: `llama-server -m model.gguf --port 8089` on the same box
+//     as Flock. Set `engine.preferred: llamacpp` (or `FLOCK_ENGINE=llamacpp`)
+//     and point `engine.llamacpp_endpoint` at it. Lower RAM and cold-start
+//     latency than Ollama on weak hardware — bare llama.cpp, no daemon
+//     layer in between.
 //
-// Manual setup workflow (if you prefer to manage processes yourself):
+//   - Distributed (RPC): `llama-server --rpc <backends>` shards a single
+//     model across multiple machines via `rpc-server` processes. The
+//     sharding orchestrator (`internal/scheduler/sharding.go`) launches
+//     `rpc-server` on workers automatically and starts the coordinator
+//     `llama-server`, then points an internal llamacpp driver at the
+//     coordinator. You can also run it by hand and point Flock at the
+//     result via `engine.preferred: llamacpp`.
+//
+// This driver is a thin OpenAI-compatible client (same shape as VLLM/MLX);
+// from its perspective the upstream is just an OpenAI server, --rpc or not.
+//
+// Manual RPC setup (if you prefer to manage processes yourself):
 //
 //	# On each worker node:
 //	rpc-server -p 50052 &
@@ -17,7 +25,7 @@
 //	# On the coordinator (the machine that exposes the OpenAI API):
 //	llama-server -m /path/to/model.gguf \
 //	    --rpc worker1.local:50052,worker2.local:50052 \
-//	    --gpu-layers 999 --port 8080
+//	    --gpu-layers 999 --port 8089
 //
 //	# On the Flock leader, configure the catalog entry with
 //	# source.type: llamacpp_rpc

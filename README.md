@@ -667,9 +667,10 @@ auth:
 
 engine:
   preferred: "ollama"                 # ollama | vllm | mlx | llamacpp
-  ollama_endpoint: "http://127.0.0.1:11434"
-  vllm_endpoint:   "http://127.0.0.1:8000"
-  mlx_endpoint:    "http://127.0.0.1:8080"
+  ollama_endpoint:   "http://127.0.0.1:11434"
+  vllm_endpoint:     "http://127.0.0.1:8000"
+  mlx_endpoint:      "http://127.0.0.1:8080"
+  llamacpp_endpoint: "http://127.0.0.1:8089"   # llama-server (single-node or RPC coordinator) — port chosen to avoid Flock leader :8080 and worker :8081
 
 router:
   default_model: ""                   # empty → auto-pick on first up
@@ -699,7 +700,7 @@ observability:
 | `FLOCK_LOG_LEVEL` | `log_level` |
 | `FLOCK_EXTERNAL_URL` | `external_url` |
 | `FLOCK_ENGINE` | `engine.preferred` |
-| `FLOCK_OLLAMA_ENDPOINT` / `FLOCK_VLLM_ENDPOINT` / `FLOCK_MLX_ENDPOINT` | corresponding `engine.*_endpoint` |
+| `FLOCK_OLLAMA_ENDPOINT` / `FLOCK_VLLM_ENDPOINT` / `FLOCK_MLX_ENDPOINT` / `FLOCK_LLAMACPP_ENDPOINT` | corresponding `engine.*_endpoint` |
 | `VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent) |
 | `FLOCK_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `FLOCK_DEFAULT_MODEL` | `router.default_model` |

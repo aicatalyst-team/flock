@@ -39,11 +39,12 @@ type AuthConfig struct {
 }
 
 type EngineConfig struct {
-	Preferred      string `yaml:"preferred"`
-	OllamaEndpoint string `yaml:"ollama_endpoint"`
-	VLLMEndpoint   string `yaml:"vllm_endpoint"`
-	VLLMAPIKey     string `yaml:"-"` // populated from VLLM_API_KEY env
-	MLXEndpoint    string `yaml:"mlx_endpoint"`
+	Preferred        string `yaml:"preferred"`
+	OllamaEndpoint   string `yaml:"ollama_endpoint"`
+	VLLMEndpoint     string `yaml:"vllm_endpoint"`
+	VLLMAPIKey       string `yaml:"-"` // populated from VLLM_API_KEY env
+	MLXEndpoint      string `yaml:"mlx_endpoint"`
+	LlamaCppEndpoint string `yaml:"llamacpp_endpoint"`
 }
 
 type RouterConfig struct {
@@ -100,10 +101,11 @@ func Default() *Config {
 			RequireKeys: true,
 		},
 		Engine: EngineConfig{
-			Preferred:      "ollama",
-			OllamaEndpoint: "http://127.0.0.1:11434",
-			VLLMEndpoint:   "http://127.0.0.1:8000",
-			MLXEndpoint:    "http://127.0.0.1:8080",
+			Preferred:        "ollama",
+			OllamaEndpoint:   "http://127.0.0.1:11434",
+			VLLMEndpoint:     "http://127.0.0.1:8000",
+			MLXEndpoint:      "http://127.0.0.1:8080",
+			LlamaCppEndpoint: "http://127.0.0.1:8089",
 		},
 		Router: RouterConfig{
 			DefaultModel:   "",
@@ -177,6 +179,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FLOCK_MLX_ENDPOINT"); v != "" {
 		c.Engine.MLXEndpoint = v
+	}
+	if v := os.Getenv("FLOCK_LLAMACPP_ENDPOINT"); v != "" {
+		c.Engine.LlamaCppEndpoint = v
 	}
 	if v := os.Getenv("FLOCK_ENGINE"); v != "" {
 		c.Engine.Preferred = v

@@ -68,15 +68,15 @@ func cmdDoctor(args []string) {
 		warn(os.Stdout, "  → reinstall the full package: brew reinstall llama.cpp")
 	}
 
-	// Ollama daemon
+	// Configured engine daemon
 	eng := newEngineFromConfig(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := eng.Health(ctx); err != nil {
-		warn(os.Stdout, "ollama daemon not reachable: %v", err)
-		warn(os.Stdout, "  → start it with: ollama serve")
+		warn(os.Stdout, "%s engine not reachable: %v", eng.Name(), err)
+		warn(os.Stdout, "  → %s", engineStartHint(eng.Name()))
 	} else {
-		ok(os.Stdout, "ollama daemon healthy at %s", eng.Endpoint())
+		ok(os.Stdout, "%s engine healthy at %s", eng.Name(), eng.Endpoint())
 	}
 
 	// Data dir

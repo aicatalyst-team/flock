@@ -413,7 +413,7 @@ curl :8080/v1/chat/completions -H "Authorization: Bearer sk-orc-..." \
 
 This works because Flock's router falls through to the engine when no catalog entry matches the requested model id.
 
-### Use a different engine entirely (vLLM, MLX-LM)
+### Use a different engine entirely (vLLM, MLX-LM, llama.cpp)
 
 Edit `~/.flock/config.yaml`:
 
@@ -424,6 +424,21 @@ engine:
 ```
 
 Or via env: `FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://gpu:8000 flock up`. The router doesn't care which engine serves the request — it just routes by model name.
+
+**Want bare-metal speed on weak hardware?** Use `llama.cpp` directly — lower RAM and cold-start latency than Ollama:
+
+```bash
+# 1. install llama.cpp (provides llama-server + rpc-server)
+brew install llama.cpp     # macOS · apt: see https://github.com/ggml-org/llama.cpp
+
+# 2. start llama-server with your GGUF
+llama-server -m ~/models/qwen2.5-coder-7b-q4_k_m.gguf --port 8089 --n-gpu-layers 999
+
+# 3. point Flock at it
+FLOCK_ENGINE=llamacpp FLOCK_LLAMACPP_ENDPOINT=http://127.0.0.1:8089 flock up
+```
+
+Flock's default `llamacpp_endpoint` is `http://127.0.0.1:8089` — chosen to avoid both `:8080` (Flock leader) and `:8081` (worker agent). The same `llamacpp` engine name also covers RPC sharding — `flock shard create` launches a `llama-server --rpc …` coordinator that this driver talks to.
 
 ---
 

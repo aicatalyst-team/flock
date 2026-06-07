@@ -121,7 +121,8 @@ func cmdUp(args []string) {
 	}
 	if !engineOK {
 		warn(os.Stdout, "engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
-		warn(os.Stdout, "start Ollama with `ollama serve` then check `flock status`")
+		warn(os.Stdout, "  → %s", engineStartHint(eng.Name()))
+		warn(os.Stdout, "  then check `flock status`")
 	} else {
 		ok(os.Stdout, "engine: %s at %s", eng.Name(), eng.Endpoint())
 		if *autoPull && cfg.Router.DefaultModel != "" {
@@ -276,4 +277,22 @@ func printReady(cfg *config.Config, adminKey string) {
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
 	fmt.Println()
+}
+
+// engineStartHint returns the copy-pasteable command that brings the
+// configured engine up. Used by `flock up` and `flock doctor` when the
+// engine health probe fails.
+func engineStartHint(engineName string) string {
+	switch engineName {
+	case "ollama":
+		return "start it with: ollama serve"
+	case "vllm":
+		return "start vLLM (see https://docs.vllm.ai/) and ensure FLOCK_VLLM_ENDPOINT matches"
+	case "mlx", "mlx-lm":
+		return "start MLX-LM: mlx_lm.server --port 8080"
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		return "start llama.cpp: llama-server -m /path/to/model.gguf --port 8089"
+	default:
+		return "start the configured engine, then check `flock status`"
+	}
 }

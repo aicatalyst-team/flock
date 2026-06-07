@@ -70,8 +70,10 @@ func newEngineFromConfig(cfg *config.Config) engines.Engine {
 		apiKey = cfg.Engine.VLLMAPIKey
 	case "mlx", "mlx-lm":
 		endpoint = cfg.Engine.MLXEndpoint
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		endpoint = cfg.Engine.LlamaCppEndpoint
 	default:
-		die("unknown engine %q (valid: ollama, vllm, mlx)", name)
+		die("unknown engine %q (valid: ollama, vllm, mlx, llamacpp)", name)
 	}
 	eng, err := engines.NewWithAuth(name, endpoint, apiKey)
 	if err != nil {
