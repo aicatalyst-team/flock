@@ -41,6 +41,7 @@
       ║              Different models per node → route by placement          ║
       ║              Model bigger than any node → split via llama.cpp-RPC    ║
       ║              Claude / GPT requested → proxy to vendor                ║
+      ║              Engine error or timeout  → retry catalog fallback chain ║
       ╚═════════════════════════════╤════════════════════════════════════════╝
                                     │
               ┌─────────────────────┼─────────────────────┐
@@ -62,11 +63,11 @@
       │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
       │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
       │                                                                      │
-      │   26 curated catalog models (Qwen 3.6,        Each request routed   │
+      │   27 curated catalog models (Qwen 3.6,        Each request routed   │
       │   gpt-oss, Llama 4, Gemma 4, DeepSeek V4,     to EITHER your hard-  │
-      │   Kimi K2.6, Nemotron 3 Ultra, …)             ware OR a vendor —    │
-      │   + any HuggingFace or Ollama model.          you pay vendors only  │
-      │                                               when YOU chose to.    │
+      │   Kimi K2.6, Nemotron 3 Ultra, vision +       ware OR a vendor —    │
+      │   embedding models)                           you pay vendors only  │
+      │   + any HuggingFace or Ollama model.          when YOU chose to.    │
       └──────────────────────────────────────────────────────────────────────┘
 ```
 
