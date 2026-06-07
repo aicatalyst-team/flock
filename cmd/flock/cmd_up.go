@@ -271,6 +271,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    flock connect claude-code   # or: cursor, aider, continue, …")
 		fmt.Println("    flock connect --list        # see all supported clients")
 	}
+	MaybeShowUpdateNotice(os.Stdout)
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
 	fmt.Println()

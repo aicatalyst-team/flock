@@ -470,6 +470,17 @@ flock upgrade                     # alias of `update`
 
 If your binary lives in `/usr/local/bin/` (installed with sudo), `flock update` stages the new binary next to it and prints the exact `sudo mv` command to finish.
 
+### 🔔 Update notice on `flock up`
+
+`flock up` checks GitHub for a newer release on startup and prints a one-liner if one exists. The check is cached for 24 hours at `~/.flock/update-check.json` so it only hits GitHub once a day, with a hard 1-second budget so it never slows startup.
+
+To disable (offline environments, privacy):
+
+```bash
+export FLOCK_NO_UPDATE_CHECK=1
+flock up
+```
+
 ---
 
 ## 🎯 Next steps

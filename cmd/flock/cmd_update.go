@@ -328,6 +328,100 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// MaybeShowUpdateNotice prints a one-line "newer version available" notice
+// if a fresher Flock release exists. Designed to run during `flock up`:
+//
+//   - 24h cache at ~/.flock/update-check.json keeps GitHub API hits down to
+//     once per day per machine.
+//   - On cache miss, the network probe has a hard 1-second budget; if GitHub
+//     is slow we skip the notice for this run rather than block startup.
+//   - FLOCK_NO_UPDATE_CHECK=1 disables the check entirely (offline / privacy).
+//
+// Safe to call once per process — does not block longer than 1 second.
+func MaybeShowUpdateNotice(w io.Writer) {
+	if os.Getenv("FLOCK_NO_UPDATE_CHECK") == "1" {
+		return
+	}
+
+	cachePath := updateCheckCachePath()
+	if cached, ok := readCachedLatest(cachePath, 24*time.Hour); ok {
+		printUpdateNoticeIfNewer(w, cached)
+		return
+	}
+
+	// Cache stale or missing — bounded async fetch.
+	ch := make(chan string, 1)
+	go func() {
+		latest, err := fetchLatestVersion()
+		if err != nil {
+			close(ch)
+			return
+		}
+		writeCachedLatest(cachePath, latest)
+		ch <- latest
+	}()
+
+	select {
+	case latest, ok := <-ch:
+		if ok {
+			printUpdateNoticeIfNewer(w, latest)
+		}
+	case <-time.After(1 * time.Second):
+		// budget exceeded; skip notice this run, refresh next run
+	}
+}
+
+// updateCheckCache is the JSON shape we persist between runs.
+type updateCheckCache struct {
+	CheckedAt time.Time `json:"checked_at"`
+	Latest    string    `json:"latest"`
+}
+
+func updateCheckCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".flock", "update-check.json")
+}
+
+func readCachedLatest(path string, ttl time.Duration) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var c updateCheckCache
+	if err := json.Unmarshal(data, &c); err != nil {
+		return "", false
+	}
+	if time.Since(c.CheckedAt) > ttl {
+		return "", false
+	}
+	return c.Latest, true
+}
+
+func writeCachedLatest(path, latest string) {
+	if path == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	data, _ := json.Marshal(updateCheckCache{CheckedAt: time.Now(), Latest: latest})
+	_ = os.WriteFile(path, data, 0o644)
+}
+
+func printUpdateNoticeIfNewer(w io.Writer, latest string) {
+	if normalizeVersion("v"+version) == normalizeVersion(latest) {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  ✨  Flock %s is available (you have v%s).\n", latest, version)
+	fmt.Fprintln(w, "      Run `flock update` to upgrade.")
+	fmt.Fprintln(w)
+}
+
 // normalizeVersion strips leading "v" and trailing "-dev" / "-snapshot" so
 // "v0.1.0", "0.1.0", and "0.1.0-dev" can be loosely compared.
 func normalizeVersion(s string) string {
