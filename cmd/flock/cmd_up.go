@@ -146,6 +146,7 @@ func cmdUp(args []string) {
 
 	// 10. Start server with signal context
 	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)
+	srv.Version = version
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 

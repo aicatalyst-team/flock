@@ -414,7 +414,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Per-call usage records (model, protocol, tokens, latency, outcome) via `flock usage` and the Usage tab
 - Admin audit log via `flock audit` and the Audit tab
 - Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Flock's `/metrics`.
-- OpenTelemetry traces — **planned**
+- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Flock emits one span per HTTP request via `otelhttp`, with W3C `traceparent` propagation. Empty endpoint = no-op (zero overhead).
 
 ### Developer experience
 
@@ -678,6 +678,9 @@ router:
     enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
     anthropic_url: "https://api.anthropic.com"
     openai_url:    "https://api.openai.com"
+
+observability:
+  otlp_endpoint: ""                   # e.g. http://localhost:4318 — empty disables tracing (no-op overhead)
 ```
 
 ### Environment variables
@@ -695,6 +698,7 @@ router:
 | `FLOCK_DEFAULT_MODEL` | `router.default_model` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
 | `FLOCK_CATALOG_DIR` | `catalog_dir` |
+| `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 
 ### Not yet configurable (roadmap)
 

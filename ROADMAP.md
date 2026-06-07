@@ -79,7 +79,7 @@ Not strategic bets — small, scoped extensions of subsystems that already exist
 | # | Item | What it adds | Where it lives | Effort | Target |
 | --- | --- | --- | --- | --- | --- |
 | P1 | **Bedrock + Vertex egress adapters** | Two more vendor routes alongside the existing Anthropic + OpenAI fallback. Lets orgs with AWS / GCP spend keep using their existing billing path. | `internal/api/egress.go` — new vendor blocks; SigV4 signing for Bedrock, ADC token for Vertex. Config: `router.fallback.bedrock_url` / `_region`, `router.fallback.vertex_url` / `_project`. | **S** | v0.7 |
-| P2 | **OpenTelemetry / OTLP traces** | Span coverage across gateway → router → engine driver. Lines up with the existing Prometheus metrics so ops teams can correlate latency to a specific node. | Wrap chi handlers with `otelhttp`; add spans in `internal/router/router.go` + each `internal/engines/*.go`. New config: `observability.otlp_endpoint`. | **S** | v0.7 |
+| P2 | **OpenTelemetry / OTLP traces** | Span coverage starts at the chi handler; downstream child spans across router → engine driver still TBD. Pairs with the existing Prometheus metrics. | ✅ HTTP layer shipped 2026-06-07 (chi wrapped with `otelhttp`, OTLP/HTTP exporter, W3C propagation, no-op when `observability.otlp_endpoint` empty). Follow-up: add child spans in `internal/router/router.go` + each `internal/engines/*.go`. | **S** | v0.7 |
 | P3 | **Reference Grafana dashboards** | Importable JSON for cluster overview, per-model, per-user / per-key — covers the same Prometheus metrics already exposed. | New `dashboards/` directory with three `.json` files; documented in README. No code change. | **XS** | v0.7 |
 
 ---

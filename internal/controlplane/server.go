@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server is the leader-side HTTP server.
@@ -41,6 +42,12 @@ type Server struct {
 	openaiH    *api.Handler
 	anthropicH *api.AnthropicHandler
 	egressH    *api.EgressHandler
+
+	// Version is stamped into traces and the access log. Set by callers
+	// before Start; defaults to "dev" if unset.
+	Version string
+
+	tracerShutdown func(context.Context) error
 }
 
 func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger, orch *scheduler.Orchestrator) *Server {
@@ -89,10 +96,28 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	router := s.routes()
+	if s.Version == "" {
+		s.Version = "dev"
+	}
+	// Init OTLP tracing (no-op if endpoint not configured).
+	shutdown, err := initTracing(ctx, s.cfg.Observability.OTLPEndpoint, s.Version, s.log)
+	if err != nil {
+		return fmt.Errorf("init tracing: %w", err)
+	}
+	s.tracerShutdown = shutdown
+
+	// Wrap chi router with otelhttp so each inbound request gets a span.
+	// Even when tracing is disabled (NoopTracerProvider), the wrapper still
+	// participates in W3C traceparent propagation — cheap.
+	handler := otelhttp.NewHandler(s.routes(), "http.request",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
+
 	s.http = &http.Server{
 		Addr:              s.cfg.Listen,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	s.log.Info("listening", "addr", s.cfg.Listen)
@@ -115,7 +140,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return s.http.Shutdown(ctx)
+	httpErr := s.http.Shutdown(ctx)
+	if s.tracerShutdown != nil {
+		// Best-effort: flush any pending spans. Don't mask the http shutdown
+		// error if both fail.
+		if err := s.tracerShutdown(ctx); err != nil {
+			s.log.Warn("tracer shutdown", "err", err)
+		}
+	}
+	return httpErr
 }
 
 func (s *Server) routes() http.Handler {

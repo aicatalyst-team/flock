@@ -16,15 +16,16 @@ import (
 
 // Config is the full runtime configuration for a Flock node.
 type Config struct {
-	Listen      string        `yaml:"listen"`
-	ExternalURL string        `yaml:"external_url"`
-	DataDir     string        `yaml:"data_dir"`
-	LogLevel    string        `yaml:"log_level"`
-	CatalogDir  string        `yaml:"catalog_dir"`
-	Storage     StorageConfig `yaml:"storage"`
-	Auth        AuthConfig    `yaml:"auth"`
-	Engine      EngineConfig  `yaml:"engine"`
-	Router      RouterConfig  `yaml:"router"`
+	Listen        string              `yaml:"listen"`
+	ExternalURL   string              `yaml:"external_url"`
+	DataDir       string              `yaml:"data_dir"`
+	LogLevel      string              `yaml:"log_level"`
+	CatalogDir    string              `yaml:"catalog_dir"`
+	Storage       StorageConfig       `yaml:"storage"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Engine        EngineConfig        `yaml:"engine"`
+	Router        RouterConfig        `yaml:"router"`
+	Observability ObservabilityConfig `yaml:"observability"`
 }
 
 type StorageConfig struct {
@@ -57,6 +58,16 @@ type FallbackConfig struct {
 	OpenAIURL    string `yaml:"openai_url"`
 	AnthropicKey string `yaml:"-"` // populated from env at runtime
 	OpenAIKey    string `yaml:"-"` // populated from env at runtime
+}
+
+// ObservabilityConfig holds knobs for traces/logs/metrics integrations
+// that aren't on by default. The Prometheus /metrics endpoint is always
+// on — this struct is for the optional extras.
+type ObservabilityConfig struct {
+	// OTLPEndpoint is the OTLP/HTTP collector URL (e.g.
+	// http://localhost:4318). Empty → tracing disabled (NoopTracerProvider,
+	// zero overhead). Set via FLOCK_OTLP_ENDPOINT env or this YAML key.
+	OTLPEndpoint string `yaml:"otlp_endpoint"`
 }
 
 // Default returns a Config populated with safe defaults for a single-node setup.
@@ -174,6 +185,9 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
 		c.Router.Fallback.OpenAIKey = v
 		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("FLOCK_OTLP_ENDPOINT"); v != "" {
+		c.Observability.OTLPEndpoint = v
 	}
 }
 
