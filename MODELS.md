@@ -90,6 +90,7 @@ The per-model walkthroughs below (with full install + client snippets) cover the
 - [`qwen3-14b`](#qwen3-14b--general-chat-capable) — general chat, more capable
 - [`deepseek-r1-8b`](#deepseek-r1-8b--reasoning-thinking) — reasoning
 - [`llama-3.3-70b-sharded`](#llama-3-3-70b-sharded--frontier-multi-machine) — frontier, multi-machine
+- [`nomic-embed-text`](#nomic-embed-text--embeddings-for-rag) — embeddings for RAG
 
 ---
 
@@ -481,6 +482,57 @@ flock shard remove llama-3.3-70b-sharded
 ```
 
 **Switch up when:** You need bigger than 70B (DeepSeek-V3 671B MoE, Qwen3-Coder-480B) — those need more nodes and more RAM. v0.5 will support auto-scaling shard counts.
+
+---
+
+## `nomic-embed-text` — embeddings for RAG
+
+**Why pick it.** It's the default embedding model in Flock's catalog — Apache-2.0 licensed, 137 M parameters, 768-dimensional vectors, 8K-token context window. Beats OpenAI `text-embedding-ada-002` on MTEB benchmarks. If you're wiring Flock into a RAG pipeline (LangChain, LlamaIndex, Haystack, raw vector DB), this is the one to start with.
+
+**Picker fit.** Any machine — it needs ~270 MB on disk and 2 GB RAM. Runs alongside your chat model with no extra hardware budget.
+
+**Install.**
+
+```bash
+flock model add nomic-embed-text
+```
+
+**Use via API (OpenAI embeddings shape).**
+
+```bash
+KEY="sk-orc-..."
+
+curl http://localhost:8080/v1/embeddings \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nomic-embed-text","input":"the quick brown fox"}'
+```
+
+Response (truncated):
+
+```json
+{
+  "object": "list",
+  "data": [{"object":"embedding","index":0,"embedding":[0.0214, -0.0179, ...768 floats...]}],
+  "model": "nomic-embed-text",
+  "usage": {"prompt_tokens": 5, "total_tokens": 5}
+}
+```
+
+**Use via SDK.**
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="sk-orc-...")
+resp = client.embeddings.create(model="nomic-embed-text", input=["hello", "world"])
+print(len(resp.data[0].embedding))  # → 768
+```
+
+Drop-in for any code that calls OpenAI `text-embedding-3-small` / `text-embedding-ada-002` — same request and response shape.
+
+**Use via LangChain / LlamaIndex.** Point the `OpenAIEmbeddings` wrapper at `http://localhost:8080/v1` with your `sk-orc-*` key and `model="nomic-embed-text"`. No other code changes.
+
+**What it doesn't do.** This is an embedding-only model. Don't try `/v1/chat/completions` with it — it won't respond. Pair it with a chat model (Qwen, Llama, Gemma) for the generation half of your RAG stack.
 
 ---
 

@@ -528,6 +528,45 @@ Given an authenticated `InferenceRequest`, the router decides:
 - Bound to a node for `session_ttl_s` (default 600s)
 - Soft binding: if the node is overloaded, router will move the session and absorb the cache miss
 
+### Catalog fallback chain (failure-based retry)
+
+A catalog entry can declare an ordered list of fallback model IDs:
+
+```yaml
+id: qwen3.6-27b
+# … other fields …
+fallback:
+  - qwen3-14b      # try next if 27B can't serve
+  - gpt-oss-20b    # last resort
+```
+
+The router uses this list **only on failure** — not for load-balancing or capacity tuning. When the primary model can't serve a request, the router transparently retries the next ID in the chain until one succeeds or the chain is exhausted.
+
+**What counts as a failure**:
+
+- Engine connection refused / timeout
+- HTTP 5xx from the engine
+- Streaming connection drops before any tokens are delivered
+- Model-not-loaded errors when no node has it
+
+**What does not count**:
+
+- HTTP 4xx from the engine (bad request → client's problem)
+- A token-by-token stream that disconnects mid-response (the client already has partial output)
+- Validation failures upstream of engine dispatch
+
+**Transparency**:
+
+- The response back to the client carries the **originally requested** `model:` string. The client never learns a fallback was used.
+- Each substitution is recorded in `audit_log` with `actor=router`, `action=fallback`, `details={"from":"qwen3.6-27b","to":"qwen3-14b","reason":"503"}`.
+- The leader's stderr also logs each fallback hit for live observability.
+
+**Why failure-based, not policy-based**:
+
+We intentionally do **not** support fallback by user, by request shape, or by capacity. Those are policy concerns and would invite scope creep into tenant isolation / content policy (both [explicitly killed](#out-of-scope) in ROADMAP). The catalog `fallback:` field is purely about graceful degradation when a specific model breaks.
+
+**Implementation**: `internal/router/router.go` resolves `[primary, ...fallback]` from the catalog, then walks the chain in order on each retriable error (`Chat()` and `Embed()` both do this). The chain length is whatever the catalog YAML declares — keep it short (≤ 3 usually) so a single bad request can't cascade through your whole catalog. See `internal/router/router_fallback_test.go` for the test coverage.
+
 ---
 
 ## Scheduler

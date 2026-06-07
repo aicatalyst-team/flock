@@ -18,16 +18,20 @@ func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
 		summary: "install, list, search, inspect, or uninstall LLM models",
-		usage:   "flock model <add <id> | ls | search [query] | info <id> | remove <id>>",
+		usage:   "flock model <add <id> [--force] | ls | search [query] | info <id> | remove <id>>",
 		examples: []string{
 			"flock model search                # browse the full catalog",
 			"flock model search coder          # filter to coding models",
-			"flock model info qwen-coder-14b   # full details on one model",
+			"flock model search vision         # filter by capability (vision, embedding, tools, …)",
+			"flock model info qwen-coder-14b   # full details: capabilities, hardware, fallback chain, install + use snippets",
 			"flock model add llama-3.2-3b      # install (auto-delegates if sharded)",
+			"flock model add llama-3.3-70b --force   # bypass the hardware floor check",
 			"flock model ls                    # list installed models",
 			"flock model remove llama-3.2-3b",
 		},
 		notes: []string{
+			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
+			"Override with --force when you know swap, quantization, or sharding will compensate.",
 			"For sharded models (split across multiple machines) see `flock shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
 		},
@@ -353,8 +357,23 @@ func modelInfo(id string) {
 		fmt.Printf("  %sSharding%s       required (default %d shards, %s engine)\n",
 			bold, reset, entry.Sharding.DefaultShards, entry.Sharding.Engine)
 	}
+	if len(entry.Fallback) > 0 {
+		fmt.Printf("  %sFallback%s       %s\n",
+			bold, reset, strings.Join(entry.Fallback, " → "))
+	}
 
-	// Install + usage snippets
+	// Install + usage snippets — shape depends on what this model does.
+	hasCap := func(c string) bool {
+		for _, x := range entry.Capabilities {
+			if x == c {
+				return true
+			}
+		}
+		return false
+	}
+	isEmbedding := hasCap("embedding")
+	isVision := hasCap("vision")
+
 	fmt.Println()
 	fmt.Printf("%sInstall%s\n", bold, reset)
 	if entry.Sharding.Required {
@@ -364,16 +383,32 @@ func modelInfo(id string) {
 	}
 
 	fmt.Println()
-	fmt.Printf("%sUse via API (OpenAI shape)%s\n", bold, reset)
-	fmt.Printf("  curl http://localhost:8080/v1/chat/completions \\\n")
-	fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
-	fmt.Printf("    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n", entry.ID)
-	fmt.Println()
-	fmt.Printf("%sUse via Claude Code%s\n", bold, reset)
-	fmt.Printf("  export ANTHROPIC_BASE_URL=http://localhost:8080\n")
-	fmt.Printf("  export ANTHROPIC_AUTH_TOKEN=sk-orc-...\n")
-	fmt.Printf("  export ANTHROPIC_MODEL=%s\n", entry.ID)
-	fmt.Printf("  claude\n")
+	if isEmbedding {
+		fmt.Printf("%sUse via API (OpenAI embeddings shape)%s\n", bold, reset)
+		fmt.Printf("  curl http://localhost:8080/v1/embeddings \\\n")
+		fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
+		fmt.Printf("    -d '{\"model\":\"%s\",\"input\":\"hello world\"}'\n", entry.ID)
+		fmt.Println()
+		fmt.Printf("%sDrop-in for OpenAI text-embedding-* in any RAG library.%s\n", dim, reset)
+	} else {
+		fmt.Printf("%sUse via API (OpenAI shape)%s\n", bold, reset)
+		fmt.Printf("  curl http://localhost:8080/v1/chat/completions \\\n")
+		fmt.Printf("    -H 'Authorization: Bearer sk-orc-...' \\\n")
+		fmt.Printf("    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n", entry.ID)
+		if isVision {
+			fmt.Println()
+			fmt.Printf("%sFor image input, send a content array with an `image_url` block:%s\n", dim, reset)
+			fmt.Printf("  -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\n", entry.ID)
+			fmt.Printf("       \"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},\n")
+			fmt.Printf("                   {\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,...\"}}]}]}'\n")
+		}
+		fmt.Println()
+		fmt.Printf("%sUse via Claude Code%s\n", bold, reset)
+		fmt.Printf("  export ANTHROPIC_BASE_URL=http://localhost:8080\n")
+		fmt.Printf("  export ANTHROPIC_AUTH_TOKEN=sk-orc-...\n")
+		fmt.Printf("  export ANTHROPIC_MODEL=%s\n", entry.ID)
+		fmt.Printf("  claude\n")
+	}
 	fmt.Println()
 	fmt.Printf("%sFull walkthrough%s   https://github.com/hadihonarvar/flock/blob/main/MODELS.md#%s\n",
 		bold, reset, strings.ReplaceAll(entry.ID, ".", "-"))
