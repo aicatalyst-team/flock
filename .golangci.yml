@@ -23,7 +23,18 @@ linters:
         - (*database/sql.DB).Close
         - (*database/sql.Stmt).Close
         - (*os.File).Close
+        - (*compress/gzip.Reader).Close
+        - (*compress/gzip.Writer).Close
         - (*bufio.Scanner).Buffer
+        - (github.com/hadihonarvar/flock/internal/store.Store).Close
+        # Terminal output — error means "stdout/stderr is closed", which
+        # would already be killing the process. Not worth a check at every
+        # call site.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - io.WriteString
+        - os.RemoveAll
     govet:
       enable-all: true
       disable:
