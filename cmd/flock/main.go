@@ -51,6 +51,8 @@ func main() {
 		cmdUpdate(args)
 	case "connect":
 		cmdConnect(args)
+	case "disconnect":
+		cmdDisconnect(args)
 	case "invite":
 		cmdInvite(args)
 	case "help", "--help", "-h":
@@ -95,6 +97,7 @@ Commands:
   config edit              Print the editor command to edit config
   connect <client>         Print copy-paste config for a tool (Claude Code, Cursor, …)
   connect --list           List supported clients
+  disconnect <client>      Print reversal steps for a previous 'connect'
   invite <name>            Create a user-scope token + share card for a teammate
   doctor                   Diagnose common problems
   update [--check]         Check / install the latest Flock release
