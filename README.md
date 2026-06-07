@@ -396,25 +396,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Multi-tenancy
 
-- Per-user API keys with revocation and scopes
-- Daily/monthly token quotas per key
-- Audit log of every call
-- OIDC login for the web UI (Google, GitHub, Okta)
-- Cost-equivalent metering ("you saved $X vs. OpenAI this month")
+- Per-user API keys with revocation and scopes (admin / user / node)
+- Daily token quotas per key with usage metering
+- Audit log of every admin mutation
+- OIDC login for the web UI (Google, GitHub, Okta) — **planned**; v0.4 uses a pasted admin key
 
 ### Hybrid local + cloud
 
-- Built-in egress adapters for Anthropic, OpenAI, Bedrock, Vertex
-- Policy-based routing: by model name, by user, by request shape
-- Transparent fallback when local is overloaded
-- Unified billing and logs
+- Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
+- Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
+- Bedrock / Vertex / other cloud providers — **planned**
 
 ### Observability
 
-- Prometheus metrics endpoint
-- Pre-built Grafana dashboards
-- OpenTelemetry traces across gateway → scheduler → worker
-- Web UI live tail of recent requests
+- Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors
+- Per-call usage records (model, protocol, tokens, latency, outcome) via `flock usage` and the Usage tab
+- Admin audit log via `flock audit` and the Audit tab
+- Pre-built Grafana dashboards — **planned**
+- OpenTelemetry traces — **planned**
 
 ### Developer experience
 
@@ -430,7 +429,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Flock ships a curated catalog of **26 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
+Flock ships a curated catalog of **27 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag). See [catalog/README.md](catalog/README.md) for the YAML schema if you want to PR an entry.
 
 > 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/audio/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 
@@ -853,11 +852,12 @@ flock model add file:./my-finetune.gguf
 ```
 
 This:
-1. Records the model in the registry
-2. Picks the best node(s) to host it (or shards across multiple)
-3. Pulls the weights to those nodes (with resume support)
-4. Launches the right inference engine
-5. Flips the gateway routing to make the model available
+1. Checks `catalog/<id>.yaml`'s `hardware.min_ram_gb` (and `min_vram_gb`) against the cluster — installs that overshoot the floor are refused with a clear error. Pass `--force` to override (e.g. when you know swap or a quantization knob will save you).
+2. Records the model in the registry
+3. Picks the best node(s) to host it (or shards across multiple)
+4. Pulls the weights to those nodes (with resume support)
+5. Launches the right inference engine
+6. Flips the gateway routing to make the model available
 
 ### List active models
 

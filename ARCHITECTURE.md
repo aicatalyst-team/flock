@@ -713,13 +713,15 @@ Export via OTLP. Defaults disabled; enable with `observability.otlp_endpoint`.
 
 `slog` to stdout in JSON. Levels: debug, info, warn, error. Request IDs propagated through context.
 
-### Dashboards
+### Dashboards (planned)
 
-`dashboards/` ships:
+A `dashboards/` directory with importable Grafana JSON will ship in a later milestone:
 
 - `cluster-overview.json` — RPS, latency, GPU util, queue depth
 - `per-model.json` — TTFT, tok/s, cache hit rate, errors
-- `per-user.json` — calls, tokens, quota, cost equivalent
+- `per-user.json` — calls, tokens, quota utilization
+
+Until then, the Prometheus metrics at `/metrics` cover the same data — wire them into your own dashboards.
 
 ---
 

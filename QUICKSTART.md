@@ -172,6 +172,41 @@ Claude Code now talks to your local Llama 1B instead of `api.anthropic.com`.
 
 > **Why `ANTHROPIC_MODEL`?** Without it Claude Code defaults to a `claude-*` model name. With no `ANTHROPIC_API_KEY` set, Flock won't proxy to real Anthropic, so the request would 404 against your local engine. Setting `ANTHROPIC_MODEL` to a local catalog id makes Claude Code request your local model.
 
+### E) Vision (image input)
+
+If you've installed a vision-capable model (e.g. `flock model add gemma4-12b`, `gemma4-26b`, `llama-4-scout`, or any `qwen3-vl-*`), you can send images on the same `/v1/chat/completions` endpoint:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma4-12b",
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "what is in this picture?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAA..."}}
+      ]
+    }]
+  }'
+```
+
+Anthropic-shape (`/v1/messages` with `image` content blocks) works too. Vision routes through the Ollama path today; the engine driver pulls the image bytes from data URLs or http(s) URLs.
+
+### F) Embeddings
+
+```bash
+flock model add nomic-embed-text       # one-time install of the default embedding model
+
+curl http://localhost:8080/v1/embeddings \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nomic-embed-text","input":"hello world"}'
+```
+
+You'll get back an OpenAI-shape `{"data":[{"embedding":[…768 floats…]}]}` response. Use it with any RAG library that talks OpenAI embeddings.
+
 ---
 
 ## 👥 Share with your team
