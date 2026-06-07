@@ -348,8 +348,9 @@ func (s *Server) processLogs(w http.ResponseWriter, r *http.Request) {
 //
 // Request:  HEAD /v1/process/file?name=<basename>&sha256=<hex>
 // Response: 200 OK with header X-File-Path: <abs path on worker>
-//           404 Not Found    — file missing or sha mismatch
-//           503 if no ModelsDir is configured on this worker
+//
+//	404 Not Found    — file missing or sha mismatch
+//	503 if no ModelsDir is configured on this worker
 //
 // `name` must be a bare basename — no path separators. The worker resolves
 // it under ModelsDir/<name> to prevent path-escape attacks even with a
@@ -384,11 +385,14 @@ func (s *Server) fileCheck(w http.ResponseWriter, r *http.Request) {
 // removed and 422 returned.
 //
 // Request:  POST /v1/process/upload?name=<basename>&sha256=<hex>
-//           body: raw file contents (no multipart wrapper — Content-Length
-//                 is the size)
+//
+//	body: raw file contents (no multipart wrapper — Content-Length
+//	      is the size)
+//
 // Response: 200 OK  {"path": "<abs path>", "sha256": "<hex>", "size": <n>}
-//           422     {"error": "sha mismatch: got X want Y"}
-//           503     if no ModelsDir is configured
+//
+//	422     {"error": "sha mismatch: got X want Y"}
+//	503     if no ModelsDir is configured
 //
 // The file is written to a `.partial` sibling first and renamed on success,
 // so an interrupted upload doesn't leave a partial file the leader might

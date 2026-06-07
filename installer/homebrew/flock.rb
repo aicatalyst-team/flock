@@ -11,6 +11,12 @@ class Flock < Formula
   license "Apache-2.0"
   version "0.0.0" # placeholder; GoReleaser sets this
 
+  # Optional but recommended dependency: llama.cpp ships `rpc-server` +
+  # `llama-server`, which Flock launches when you `flock shard create` a
+  # model across multiple machines. Single-node Flock works without it.
+  # `flock doctor` warns when rpc-server is missing on the PATH.
+  depends_on "llama.cpp" => :recommended
+
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/hadihonarvar/flock/releases/download/v#{version}/flock-darwin-arm64.tar.gz"

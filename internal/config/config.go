@@ -58,6 +58,17 @@ type FallbackConfig struct {
 	OpenAIURL    string `yaml:"openai_url"`
 	AnthropicKey string `yaml:"-"` // populated from env at runtime
 	OpenAIKey    string `yaml:"-"` // populated from env at runtime
+
+	// Bedrock (AWS) — auth uses the standard AWS credentials chain (env,
+	// shared config, instance role). Empty BedrockRegion disables routing.
+	BedrockRegion string `yaml:"bedrock_region"`
+	BedrockURL    string `yaml:"bedrock_url"` // optional override
+
+	// Vertex (GCP) — auth uses Application Default Credentials. Empty
+	// VertexProject disables routing.
+	VertexProject  string `yaml:"vertex_project"`
+	VertexLocation string `yaml:"vertex_location"` // default us-central1
+	VertexURL      string `yaml:"vertex_url"`      // optional override
 }
 
 // ObservabilityConfig holds knobs for traces/logs/metrics integrations
@@ -188,6 +199,17 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FLOCK_OTLP_ENDPOINT"); v != "" {
 		c.Observability.OTLPEndpoint = v
+	}
+	if v := os.Getenv("FLOCK_BEDROCK_REGION"); v != "" {
+		c.Router.Fallback.BedrockRegion = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("FLOCK_VERTEX_PROJECT"); v != "" {
+		c.Router.Fallback.VertexProject = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("FLOCK_VERTEX_LOCATION"); v != "" {
+		c.Router.Fallback.VertexLocation = v
 	}
 }
 

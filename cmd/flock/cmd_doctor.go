@@ -54,6 +54,20 @@ func cmdDoctor(args []string) {
 		warn(os.Stdout, "ollama not found in PATH — install: brew install ollama")
 	}
 
+	// llama.cpp (needed only for sharded models — rpc-server + llama-server)
+	rpcPath, rpcErr := exec.LookPath("rpc-server")
+	srvPath, srvErr := exec.LookPath("llama-server")
+	switch {
+	case rpcErr == nil && srvErr == nil:
+		ok(os.Stdout, "llama.cpp binaries present — rpc-server at %s, llama-server at %s", rpcPath, srvPath)
+	case rpcErr != nil && srvErr != nil:
+		note(os.Stdout, "llama.cpp not installed — `flock shard create` won't work")
+		note(os.Stdout, "  → install: brew install llama.cpp  (macOS) · apt: see https://github.com/ggml-org/llama.cpp")
+	default:
+		warn(os.Stdout, "partial llama.cpp install — rpc-server=%v llama-server=%v", rpcErr == nil, srvErr == nil)
+		warn(os.Stdout, "  → reinstall the full package: brew reinstall llama.cpp")
+	}
+
 	// Ollama daemon
 	eng := newEngineFromConfig(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

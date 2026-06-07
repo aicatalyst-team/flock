@@ -75,10 +75,15 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	egressH := &api.EgressHandler{
 		Store: st,
 		Config: api.FallbackConfig{
-			AnthropicKey: cfg.Router.Fallback.AnthropicKey,
-			AnthropicURL: cfg.Router.Fallback.AnthropicURL,
-			OpenAIKey:    cfg.Router.Fallback.OpenAIKey,
-			OpenAIURL:    cfg.Router.Fallback.OpenAIURL,
+			AnthropicKey:   cfg.Router.Fallback.AnthropicKey,
+			AnthropicURL:   cfg.Router.Fallback.AnthropicURL,
+			OpenAIKey:      cfg.Router.Fallback.OpenAIKey,
+			OpenAIURL:      cfg.Router.Fallback.OpenAIURL,
+			BedrockRegion:  cfg.Router.Fallback.BedrockRegion,
+			BedrockURL:     cfg.Router.Fallback.BedrockURL,
+			VertexProject:  cfg.Router.Fallback.VertexProject,
+			VertexLocation: cfg.Router.Fallback.VertexLocation,
+			VertexURL:      cfg.Router.Fallback.VertexURL,
 		},
 	}
 	return &Server{
@@ -254,12 +259,15 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		case "openai":
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			s.egressH.ServeOpenAI(w, r)
-		case "anthropic":
+		case "vertex":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeVertex(w, r)
+		case "anthropic", "bedrock":
 			// Protocol mismatch: OpenAI-format request with a Claude model.
 			// Anthropic's API only accepts /v1/messages, so return an actionable
 			// error rather than forwarding garbage upstream.
 			writeJSONError(w, http.StatusBadRequest,
-				fmt.Sprintf("model %q is an Anthropic model; use POST /v1/messages with the Anthropic SDK or set ANTHROPIC_BASE_URL on your client", model))
+				fmt.Sprintf("model %q uses the Anthropic message shape; POST to /v1/messages instead of /v1/chat/completions", model))
 		}
 		return
 	}
@@ -280,10 +288,14 @@ func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Reques
 		case "anthropic":
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			s.egressH.ServeAnthropic(w, r)
-		case "openai":
-			// Protocol mismatch: Anthropic-format request with an OpenAI model.
+		case "bedrock":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeBedrock(w, r)
+		case "openai", "vertex":
+			// Protocol mismatch: Anthropic-format request with a non-Anthropic
+			// model.
 			writeJSONError(w, http.StatusBadRequest,
-				fmt.Sprintf("model %q is an OpenAI model; use POST /v1/chat/completions with the OpenAI SDK", model))
+				fmt.Sprintf("model %q does not use the Anthropic message shape; POST to /v1/chat/completions instead", model))
 		}
 		return
 	}

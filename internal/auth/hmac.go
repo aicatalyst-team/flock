@@ -30,10 +30,10 @@ import (
 //	X-Flock-Auth: v=1,id=<nodeID>,ts=<unix>,sig=<hex>
 //
 // Receiver:
-//   1. Parse the header (reject if malformed)
-//   2. Reject if |now - ts| > MaxSkew (default 5 min) — replay window
-//   3. Resolve secret for nodeID (worker: own token; leader: store lookup)
-//   4. Recompute signature; constant-time compare
+//  1. Parse the header (reject if malformed)
+//  2. Reject if |now - ts| > MaxSkew (default 5 min) — replay window
+//  3. Resolve secret for nodeID (worker: own token; leader: store lookup)
+//  4. Recompute signature; constant-time compare
 //
 // Why no body signing: file uploads stream (multi-GB) and we don't want
 // to buffer them into memory just to sign. The trust assumption is that

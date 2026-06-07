@@ -23,16 +23,49 @@ import (
 
 // FallbackConfig is what the gateway needs to proxy to upstream vendors.
 type FallbackConfig struct {
-	AnthropicKey  string
-	AnthropicURL  string // default https://api.anthropic.com
-	OpenAIKey     string
-	OpenAIURL     string // default https://api.openai.com
+	AnthropicKey string
+	AnthropicURL string // default https://api.anthropic.com
+	OpenAIKey    string
+	OpenAIURL    string // default https://api.openai.com
+
+	// Bedrock (AWS) — model names like `anthropic.claude-*` or
+	// `amazon.titan-*` route here when BedrockRegion is set. Auth requires
+	// AWS SigV4 signing using credentials from the standard AWS chain
+	// (env, shared config, instance role). Signing implementation is
+	// tracked as v0.7 in ROADMAP P1 — for now Vendor() recognizes the
+	// model prefix and ServeBedrock returns a 501 with a clear setup hint.
+	BedrockRegion string // e.g. us-east-1; empty disables routing
+	BedrockURL    string // optional override; default https://bedrock-runtime.<region>.amazonaws.com
+
+	// Vertex (GCP) — model names like `gemini-*` route here when
+	// VertexProject is set. Auth uses Application Default Credentials
+	// (gcloud auth, service account JSON, or workload identity). Same
+	// v0.7 story as Bedrock.
+	VertexProject  string // GCP project id; empty disables routing
+	VertexLocation string // e.g. us-central1; default us-central1
+	VertexURL      string // optional override; default https://<location>-aiplatform.googleapis.com
+
 	EnabledModels map[string]bool
 }
 
 // Vendor returns the vendor a model name belongs to (or "" if it's local).
+// Order matters: Bedrock-flavored Anthropic model IDs like
+// "anthropic.claude-3-sonnet-20240229-v1:0" carry the cloud prefix, so they
+// must be matched BEFORE the plain `claude-` rule.
 func Vendor(model string) string {
 	switch {
+	// Bedrock model IDs: "anthropic.*", "amazon.*", "meta.*", "mistral.*"
+	case strings.HasPrefix(model, "anthropic."),
+		strings.HasPrefix(model, "amazon."),
+		strings.HasPrefix(model, "meta."),
+		strings.HasPrefix(model, "mistral."),
+		strings.HasPrefix(model, "ai21."),
+		strings.HasPrefix(model, "cohere."):
+		return "bedrock"
+	// Vertex Gemini IDs: "gemini-*", "publishers/google/models/gemini-*"
+	case strings.HasPrefix(model, "gemini-"),
+		strings.Contains(model, "publishers/google/"):
+		return "vertex"
 	case strings.HasPrefix(model, "claude-"):
 		return "anthropic"
 	case strings.HasPrefix(model, "gpt-"),
@@ -63,6 +96,54 @@ func (e *EgressHandler) ServeAnthropic(w http.ResponseWriter, r *http.Request) {
 		"Content-Type":      "application/json",
 		"User-Agent":        "flock/0.2",
 	})
+}
+
+// ServeBedrock would proxy a request to AWS Bedrock for an
+// `anthropic.*` / `amazon.*` / `meta.*` model. SigV4 signing is required;
+// the current build returns 501 with the operator config that's missing.
+// Tracked as ROADMAP P1 (v0.7).
+func (e *EgressHandler) ServeBedrock(w http.ResponseWriter, r *http.Request) {
+	if e.Config.BedrockRegion == "" {
+		writeJSONError(w, http.StatusServiceUnavailable, "configuration_error",
+			"Bedrock egress not configured; set router.fallback.bedrock_region (or FLOCK_BEDROCK_REGION)")
+		return
+	}
+	// Detection works, the routing pipe is wired up — what's missing is the
+	// SigV4 signer. Returning 501 here keeps the user-visible error
+	// actionable instead of silently falling through to "model not found".
+	writeJSONError(w, http.StatusNotImplemented, "not_implemented",
+		"Bedrock egress detection is shipped (region="+e.Config.BedrockRegion+
+			") but SigV4 signing is not yet implemented — tracked as ROADMAP P1 (v0.7). "+
+			"In the meantime, configure your client to talk to Bedrock directly.")
+	recordEgress(r.Context(), e.Store, "bedrock", peekVendorModelFromRequest(r), time.Now(), "not_implemented")
+}
+
+// ServeVertex would proxy to Google Vertex AI for a `gemini-*` model. ADC
+// auth (gcloud / service account / workload identity) is the missing piece.
+// Same v0.7 story as ServeBedrock.
+func (e *EgressHandler) ServeVertex(w http.ResponseWriter, r *http.Request) {
+	if e.Config.VertexProject == "" {
+		writeJSONError(w, http.StatusServiceUnavailable, "configuration_error",
+			"Vertex egress not configured; set router.fallback.vertex_project (or FLOCK_VERTEX_PROJECT)")
+		return
+	}
+	writeJSONError(w, http.StatusNotImplemented, "not_implemented",
+		"Vertex egress detection is shipped (project="+e.Config.VertexProject+
+			") but ADC auth is not yet implemented — tracked as ROADMAP P1 (v0.7). "+
+			"In the meantime, configure your client to talk to Vertex directly.")
+	recordEgress(r.Context(), e.Store, "vertex", peekVendorModelFromRequest(r), time.Now(), "not_implemented")
+}
+
+// peekVendorModelFromRequest sniffs the model name from the request body
+// without consuming it for downstream handlers. Cheap; used only for usage
+// metering on the stubbed Bedrock/Vertex paths.
+func peekVendorModelFromRequest(r *http.Request) string {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "unknown"
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return peekVendorModel(body)
 }
 
 // ServeOpenAI proxies a /v1/chat/completions request to the real OpenAI API.
