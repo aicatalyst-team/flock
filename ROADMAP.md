@@ -39,20 +39,34 @@ These add endpoints that don't fit the chat-streaming pattern. Worth doing but e
 
 ---
 
-## The eight accessibility bets
+## Orchestration bets (the actual gateway value)
 
-Most open-source AI tools optimize for "I can run a model on my GPU." That's solved. What's *not* solved is making **teams** comfortable using local AI in production. Eight bets, ranked by impact-per-effort:
+Scope filter: Flock is an **orchestration / router / gateway** for open-weight LLMs running on a trusted network. RBAC, SSO, billing-per-user analytics, and content policies are explicitly **out of scope** — they're enterprise-SaaS feature creep and other projects do them better. We assume:
 
-| # | Bet | Why it matters | Where it lives in Flock | Effort | Target |
+- The network is trusted (LAN, Tailscale, internal VPN)
+- Existing per-user API keys + daily token quotas + full audit log are sufficient for accountability
+- Operators want better routing decisions, not more user management
+
+With that filter, here's what genuinely moves the needle:
+
+| # | Bet | Why it's gateway value | Where it lives | Effort | Target |
 | --- | --- | --- | --- | --- | --- |
-| 1 | **Cost transparency** | Show "$0 (local) vs $0.02 (Claude)" per call. Converts "this is cool" into "we should switch." Nobody else does this well. | Catalog gains `cost_per_1m_tokens_in/out`; `usage_records` gains `cost_micros`; admin UI Usage tab gets a $$ column | **S** | v0.4 |
-| 2 | **Better-than-vendor team controls** | RBAC, SSO, billing-per-user analytics, content policies, retention. The reason teams stay on Claude/OpenAI is *administration*, not capability. | Auth refactor — add `roles` table, OIDC handler, policy engine | **L** | v0.5 |
-| 3 | **Hardware abstraction across mixed fleets** | Treat M3 Studio + RTX 4090 + Snapdragon X as one compute pool. Scheduler routes by VRAM/load/network. | Replace router's `pick()` with a planner that uses `nodes.capabilities` (already in store) | **M** | v0.6 |
-| 4 | **Privacy-by-default RAG** | Embed → store → retrieve → generate, end-to-end zero-network. Local embedding models are now Apache-licensed and good. | Built on top of (1) embeddings + new vector store adapter (SQLite-VSS or pgvector) | **M** | v0.5 |
-| 5 | **Latency-aware fallback** | Silently fall back to smaller model (or vendor) when user's box can't keep up at < 2 s TTFT. 10× addressable user base. | Router records p95 TTFT per (node, model); falls back when over threshold | **M** | v0.5 |
-| 6 | **Edge runtime (NAS / Pi)** | Real "average small business" segment. 4 B model on $400 Synology NAS is the democratization moment. | Cross-compile for `linux/arm64-musl`, statically link, package as `.deb` / `.spk` | **S** | v0.7 |
-| 7 | **Signed model catalogs** | "apt for AI." Verified provenance, signed entries, community contributions with review. | Add `minisign` signature next to each catalog YAML; `flock model add` verifies before install | **S** | v0.6 |
-| 8 | **Embeddable Go library** | Let desktop apps (LM Studio clones, IDE plugins) import `flock/runtime` directly. Biggest distribution channel for OSS AI in 2026 isn't a CLI — it's *embedded in tools developers already use*. | Move CLI-glue out of `internal/`, expose `pkg/runtime`, `pkg/router`, `pkg/store` | **L** | v1.0 |
+| 1 | **Cost transparency** | Informs routing decisions — operator sees "$0 (local) vs $0.02 (vendor)" per call, can decide which models to keep paid. Pure orchestration data, not user-mgmt. | Catalog gains `cost_per_1m_tokens_in/out`; `usage_records` gains `cost_micros`; UI Usage tab shows the column | **S** | v0.4 |
+| 2 | **Latency-aware fallback** | Router silently falls back to a smaller local model (or vendor) when the current node can't keep up at < 2 s TTFT. 10× addressable hardware. | Router records p95 TTFT per (node, model); falls back over threshold | **M** | v0.5 |
+| 3 | **Hardware abstraction** | Treat M3 Studio + RTX 4090 + Snapdragon X laptop as one compute pool. Scheduler routes by VRAM/load/network. Pure orchestration. | Replace router's `pick()` with a planner over `nodes.capabilities` (already in store) | **M** | v0.6 |
+| 4 | **Edge runtime (NAS / Pi)** | Gateway runs on smaller hardware = more deployments. 4 B model on a $400 Synology NAS democratizes the gateway. | Cross-compile `linux/arm64-musl`, statically link, ship as `.deb` / `.spk` packages | **S** | v0.7 |
+| 5 | **Signed model catalogs** | Supply-chain trust for catalog entries. "apt for AI." | `minisign` signatures alongside catalog YAML; `flock model add` verifies before install | **S** | v0.6 |
+| 6 | **Embeddable Go library** | Let desktop apps / IDE plugins import `flock/runtime` directly. Biggest distribution channel for OSS AI in 2026 isn't a CLI, it's *embedded in tools developers already use*. | Move CLI glue out of `internal/`; expose `pkg/runtime`, `pkg/router`, `pkg/store` | **L** | v1.0 |
+
+### Explicitly killed (or sibling-projected) scope
+
+| Item | Why not Flock |
+| --- | --- |
+| RBAC roles / OIDC / SSO | Enterprise auth is feature creep for a gateway on a trusted network. Per-user keys + quotas + audit already cover the accountability story. |
+| Billing-per-user analytics dashboards | Cost transparency (bet 1) gives operators the data; user-facing billing UIs are SaaS-app territory. |
+| Content policies / output filtering | Different operational concern; happens at the client (Claude Code, Cursor) layer, not the gateway. |
+| Privacy-by-default RAG | RAG is a separate workload (vector store, retrieval, ranking pipelines). If needed, build it as a sibling project that depends on Flock's embeddings + chat endpoints. |
+| Video / real-time voice | Already out of scope — see [§ Out of scope](#out-of-scope). |
 
 ---
 
@@ -84,13 +98,12 @@ The only **breaking changes** are (3) router rewrite and (8) package layout — 
 ## Sequence
 
 ```
-v0.4 (now)    → Vision (Ollama) · stub for vLLM/MLX · catalog cost field (data only)
-v0.4.x        → Embeddings · Rerank · Cost UI in admin dashboard
-v0.5          → ASR · TTS · RBAC (bet 2) · Latency fallback (bet 5)
-v0.5.x        → RAG package (bet 4) · privacy-by-default
-v0.6          → Image generation · HW scheduler (bet 3) · signed catalogs (bet 7)
-v0.7          → Edge runtime (bet 6) · arm64 NAS packages
-v1.0          → Embeddable Go library (bet 8) · API stability commitment
+v0.4.0 (done)  → Vision (Ollama path)
+v0.4.x         → Embeddings · Rerank · Cost transparency (bet 1)
+v0.5           → ASR · TTS · Latency-aware fallback (bet 2)
+v0.6           → Image generation · Hardware abstraction (bet 3) · Signed catalogs (bet 5)
+v0.7           → Edge runtime / arm64 NAS packages (bet 4)
+v1.0           → Embeddable Go library (bet 6) · API stability commitment
 ```
 
 Every release is auto-cut from conventional commits — see `.github/workflows/auto-release.yml`.
