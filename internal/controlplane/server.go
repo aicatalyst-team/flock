@@ -669,11 +669,12 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		DataDir:     s.cfg.DataDir,
 		LogLevel:    s.cfg.LogLevel,
 		Engine: map[string]string{
-			"preferred":       s.cfg.Engine.Preferred,
-			"ollama_endpoint": s.cfg.Engine.OllamaEndpoint,
-			"vllm_endpoint":   s.cfg.Engine.VLLMEndpoint,
-			"vllm_api_key":    redact(s.cfg.Engine.VLLMAPIKey),
-			"mlx_endpoint":    s.cfg.Engine.MLXEndpoint,
+			"preferred":         s.cfg.Engine.Preferred,
+			"ollama_endpoint":   s.cfg.Engine.OllamaEndpoint,
+			"vllm_endpoint":     s.cfg.Engine.VLLMEndpoint,
+			"vllm_api_key":      redact(s.cfg.Engine.VLLMAPIKey),
+			"mlx_endpoint":      s.cfg.Engine.MLXEndpoint,
+			"llamacpp_endpoint": s.cfg.Engine.LlamaCppEndpoint,
 		},
 		Router: map[string]any{
 			"default_model":   s.cfg.Router.DefaultModel,

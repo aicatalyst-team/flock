@@ -167,7 +167,7 @@ claude
 - ✅ **Anthropic-compatible** API (`/v1/messages`, `/v1/messages/count_tokens`) — Claude Code, Anthropic SDK
 - ✅ Streaming (SSE) for both protocols, with proper client-disconnect handling (no goroutine leaks)
 - ✅ **Hybrid fallback** — requests for `claude-*` or `gpt-*` transparently proxy to the real Anthropic / OpenAI API (set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`); protocol mismatch (e.g., Claude model on OpenAI route) returns a clear 400
-- ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (incl. RPC mode)
+- ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (single-node *and* RPC mode; llama-server is **auto-spawned** when the catalog entry has `source.repo` set — no manual `llama-server` step)
 - ✅ Engine endpoints + API keys configurable per engine via env (`FLOCK_VLLM_ENDPOINT`, `VLLM_API_KEY`, …)
 - ✅ Hardware auto-detection (mac + linux + NVIDIA) and auto-pick a default model
 - ✅ Catalog with curated model entries (Llama 3.2, Qwen2.5-Coder)

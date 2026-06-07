@@ -425,17 +425,23 @@ engine:
 
 Or via env: `FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://gpu:8000 flock up`. The router doesn't care which engine serves the request — it just routes by model name.
 
-**Want bare-metal speed on weak hardware?** Use `llama.cpp` directly — lower RAM and cold-start latency than Ollama:
+**Want bare-metal speed on weak hardware?** Use `llama.cpp` directly — lower RAM and cold-start latency than Ollama, and Flock auto-launches `llama-server` for you so it's still one command:
 
 ```bash
 # 1. install llama.cpp (provides llama-server + rpc-server)
 brew install llama.cpp     # macOS · apt: see https://github.com/ggml-org/llama.cpp
 
-# 2. start llama-server with your GGUF
-llama-server -m ~/models/qwen2.5-coder-7b-q4_k_m.gguf --port 8089 --n-gpu-layers 999
+# 2. that's it — Flock spawns llama-server itself
+FLOCK_ENGINE=llamacpp FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
+```
 
-# 3. point Flock at it
-FLOCK_ENGINE=llamacpp FLOCK_LLAMACPP_ENDPOINT=http://127.0.0.1:8089 flock up
+Flock looks up the catalog entry for the default model, reads its `source.repo` (a GGUF HuggingFace repo), and runs `llama-server -hf <repo> --port 8089` via its internal supervisor — the same one that already manages `rpc-server` for sharded models. When Flock stops, the spawned `llama-server` stops too.
+
+If you'd rather manage `llama-server` yourself (e.g. to pass custom flags like `-ngl 999`), start it before `flock up` and Flock will detect it and skip the auto-spawn:
+
+```bash
+llama-server -m ~/models/qwen2.5-coder-7b-q4_k_m.gguf --port 8089 --n-gpu-layers 999
+FLOCK_ENGINE=llamacpp flock up
 ```
 
 Flock's default `llamacpp_endpoint` is `http://127.0.0.1:8089` — chosen to avoid both `:8080` (Flock leader) and `:8081` (worker agent). The same `llamacpp` engine name also covers RPC sharding — `flock shard create` launches a `llama-server --rpc …` coordinator that this driver talks to.

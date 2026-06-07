@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -33,11 +35,13 @@ func cmdUp(args []string) {
 			examples: []string{
 				"flock up",
 				"FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up",
+				"FLOCK_ENGINE=llamacpp flock up           # auto-spawns llama-server if not already running",
 				"flock up --config ~/.flock/staging.yaml",
 				"flock up --auto-pull=false              # don't pre-pull the default model",
 			},
 			notes: []string{
 				"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
+				"When engine.preferred=llamacpp and no llama-server is listening on engine.llamacpp_endpoint, Flock auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
 			},
 		})
 	}
@@ -78,12 +82,46 @@ func cmdUp(args []string) {
 		ok(os.Stdout, "default model: %s", cfg.Router.DefaultModel)
 	}
 
-	// 6. Engine — bounded health probe so a wedged-but-listening engine
+	// 6. Process supervisor — created early so it can also auto-spawn
+	//    llama-server below when engine.preferred=llamacpp. Used later by
+	//    the sharding orchestrator for the coordinator on sharded models.
+	sup := agent.NewSupervisor(log)
+	defer sup.StopAll()
+
+	// 7. Engine — bounded health probe so a wedged-but-listening engine
 	//    doesn't block startup indefinitely.
 	eng := newEngineFromConfig(cfg)
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	engineOK := eng.Health(healthCtx) == nil
 	healthCancel()
+
+	// 7a. Auto-spawn llama-server when the user picked the llamacpp engine
+	//     and there's nothing listening yet. Keeps the UX symmetric with
+	//     `ollama serve` running in the background. Skipped for the other
+	//     engines for now — vLLM and MLX-LM both have heavier launch
+	//     surfaces (Python deps, GPU allocation flags) that warrant explicit
+	//     user control.
+	if !engineOK && isLlamaCppEngine(eng.Name()) && cfg.Router.DefaultModel != "" {
+		if entry := models.FindByID(cat, cfg.Router.DefaultModel); entry != nil {
+			port := parseEndpointPort(cfg.Engine.LlamaCppEndpoint)
+			spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			note(os.Stdout, "auto-spawning llama-server for %s on :%d ...", entry.ID, port)
+			_, err := scheduler.EnsureLlamaServer(spawnCtx, sup, log, scheduler.LlamaCppLaunchSpec{
+				Entry: entry, Port: port,
+			})
+			spawnCancel()
+			if err != nil {
+				warn(os.Stdout, "auto-spawn failed: %v", err)
+			} else {
+				reprobeCtx, reprobeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				engineOK = eng.Health(reprobeCtx) == nil
+				reprobeCancel()
+				if engineOK {
+					ok(os.Stdout, "llama-server ready (auto-spawned)")
+				}
+			}
+		}
+	}
 
 	// Register the leader as a "local" Node row so `flock node ls` and the
 	// admin UI show this machine alongside any joined workers. Best-effort.
@@ -130,22 +168,20 @@ func cmdUp(args []string) {
 		}
 	}
 
-	// 7. Persist PID
+	// 8. Persist PID
 	if err := writePID(cfg); err != nil {
 		warn(os.Stdout, "could not write PID file: %v", err)
 	}
 	defer removePID(cfg)
 
-	// 8. Print ready block
+	// 9. Print ready block
 	printReady(cfg, plainKey)
 
-	// 9. Process supervisor + sharding orchestrator (leader runs coordinator
-	//    llama-server processes locally for sharded models).
-	sup := agent.NewSupervisor(log)
-	defer sup.StopAll()
+	// 10. Sharding orchestrator (uses the supervisor created at step 6;
+	//     leader runs the coordinator llama-server for sharded models).
 	orch := scheduler.New(st, sup, log)
 
-	// 10. Start server with signal context
+	// 11. Start server with signal context
 	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)
 	srv.Version = version
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -277,6 +313,29 @@ func printReady(cfg *config.Config, adminKey string) {
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
 	fmt.Println()
+}
+
+// isLlamaCppEngine matches every alias the engine registry accepts for
+// the llama.cpp driver. Mirrors the cases in newEngineFromConfig +
+// internal/engines/registry.go so the auto-spawn trigger stays in sync.
+func isLlamaCppEngine(name string) bool {
+	switch name {
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		return true
+	}
+	return false
+}
+
+// parseEndpointPort extracts the port from "http://host:port" / "host:port".
+// Returns 0 when the input lacks an explicit port — callers must error out
+// before passing 0 to the supervisor.
+func parseEndpointPort(endpoint string) int {
+	if u, err := url.Parse(endpoint); err == nil && u.Port() != "" {
+		if p, err := strconv.Atoi(u.Port()); err == nil {
+			return p
+		}
+	}
+	return 0
 }
 
 // engineStartHint returns the copy-pasteable command that brings the

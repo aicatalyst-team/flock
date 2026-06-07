@@ -61,7 +61,7 @@ func cmdDoctor(args []string) {
 	case rpcErr == nil && srvErr == nil:
 		ok(os.Stdout, "llama.cpp binaries present — rpc-server at %s, llama-server at %s", rpcPath, srvPath)
 	case rpcErr != nil && srvErr != nil:
-		note(os.Stdout, "llama.cpp not installed — `flock shard create` won't work")
+		note(os.Stdout, "llama.cpp not installed — `flock shard create` + `engine.preferred=llamacpp` auto-spawn won't work")
 		note(os.Stdout, "  → install: brew install llama.cpp  (macOS) · apt: see https://github.com/ggml-org/llama.cpp")
 	default:
 		warn(os.Stdout, "partial llama.cpp install — rpc-server=%v llama-server=%v", rpcErr == nil, srvErr == nil)

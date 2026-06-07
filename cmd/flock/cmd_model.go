@@ -178,6 +178,17 @@ func engineNativeName(engine string, e *models.Entry) string {
 		if e.Source.Path != "" {
 			return e.Source.Path
 		}
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		// llama-server -hf <repo> for the HF cache path; -m <path> for a
+		// pre-downloaded GGUF. The driver's own Pull is a no-op (llama-server
+		// downloads at launch when -hf is used), so the returned name is for
+		// audit/display only.
+		if e.Source.Repo != "" {
+			return e.Source.Repo
+		}
+		if e.Source.Path != "" {
+			return e.Source.Path
+		}
 	}
 	return e.ID
 }

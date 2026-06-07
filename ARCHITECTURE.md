@@ -208,7 +208,8 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 | `internal/agent/supervisor.go` | Process supervisor used on both leader and workers. Start/Stop/Logs with a TCP readiness probe. |
 | `internal/agent/server.go` | Worker exposes `POST /v1/process/start`, `/stop`, `/list`, `/logs` — token-auth'd, calls into the supervisor. |
 | `internal/scheduler/sharding.go` | Leader-side `Orchestrator.CreateSharded` / `RemoveSharded`. Picks workers, calls their process endpoints, launches the coordinator locally, persists shard rows. |
-| `internal/engines/llamacpp_rpc.go` | Driver that talks OpenAI-compat to a `llama-server` (the coordinator). Same shape as vLLM/MLX. |
+| `internal/scheduler/llamacpp.go` | Single-node `EnsureLlamaServer` — `cmd_up` calls this when `engine.preferred=llamacpp` and nothing is listening on `llamacpp_endpoint`. Same `ProcessSpec` shape as the sharding coordinator, just without `--rpc`. |
+| `internal/engines/llamacpp_rpc.go` | Driver that talks OpenAI-compat to a `llama-server` (single-node or RPC coordinator — driver doesn't care). Same shape as vLLM/MLX. |
 | `internal/router/router.go` | `shardCoordinator()` short-circuits the normal placement lookup when a sharded model is requested — points the request at the coordinator's address. |
 
 #### Flow: `flock shard create llama-3.3-70b-sharded 2`

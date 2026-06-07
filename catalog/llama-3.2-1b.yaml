@@ -3,6 +3,9 @@ display_name: Llama 3.2 1B Instruct
 source:
   type: ollama
   ollama_name: llama3.2:1b
+  # For engine=llamacpp: auto-spawn `llama-server -hf <repo>`. The
+  # ollama_name path still wins when engine=ollama; the two coexist.
+  repo: bartowski/Llama-3.2-1B-Instruct-GGUF
 size_bytes: 1321000000
 quant: q4_k_m
 context_window: 131072
