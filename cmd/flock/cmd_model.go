@@ -41,9 +41,10 @@ func cmdModel(args []string) {
 	switch args[0] {
 	case "add":
 		if len(args) < 2 {
-			die("usage: flock model add <id>")
+			die("usage: flock model add <id> [--force]")
 		}
-		modelAdd(args[1])
+		id, force := parseModelAddArgs(args[1:])
+		modelAdd(id, force)
 	case "ls", "list":
 		modelLs()
 	case "remove", "rm":
@@ -67,12 +68,45 @@ func cmdModel(args []string) {
 	}
 }
 
-func modelAdd(id string) {
+// parseModelAddArgs extracts the model id and the --force flag from the args
+// passed after "model add". Order doesn't matter; `--force` may appear before
+// or after the id.
+func parseModelAddArgs(args []string) (id string, force bool) {
+	for _, a := range args {
+		if a == "--force" || a == "-force" {
+			force = true
+			continue
+		}
+		if id == "" {
+			id = a
+		}
+	}
+	return id, force
+}
+
+func modelAdd(id string, force bool) {
+	if id == "" {
+		die("usage: flock model add <id> [--force]")
+	}
 	cfg := loadConfigOrExit()
 	cat := loadCatalogOrExit(cfg)
 	entry := models.FindByID(cat, id)
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
+	}
+
+	// Pre-install hardware check — refuse if this machine clearly can't
+	// run the model. Cheap to compute and saves the user a long failing
+	// pull. Sharded entries are exempt (sharding is how you fit a model
+	// that doesn't fit on any single node).
+	if !entry.Sharding.Required {
+		if msg := checkHardwareForModel(entry); msg != "" {
+			if force {
+				warn(os.Stdout, "%s — proceeding because --force was set", msg)
+			} else {
+				die("%s\n  (override with `flock model add %s --force` if you know what you're doing)", msg, id)
+			}
+		}
 	}
 
 	// Sharded model? Hand off to the shard orchestrator on the leader.
