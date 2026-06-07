@@ -48,7 +48,6 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		CompletionTokens: completion,
 		LatencyMS:        int(latency.Milliseconds()),
 		Outcome:          outcome,
-		CostMicros:       lookupCostMicros(model, prompt, completion),
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior

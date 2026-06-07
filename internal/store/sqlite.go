@@ -149,10 +149,6 @@ type Usage struct {
 	CompletionTokens int
 	LatencyMS        int
 	Outcome          string
-	// CostMicros is the per-call cost in millionths of a dollar. $0 for
-	// local-engine calls; populated for vendor egress (claude-*, gpt-*, o*)
-	// based on the rate table in internal/api/pricing.go.
-	CostMicros int64
 }
 
 type UsageStore interface {
@@ -276,8 +272,7 @@ CREATE TABLE IF NOT EXISTS usage (
     prompt_tokens     INTEGER NOT NULL,
     completion_tokens INTEGER NOT NULL,
     latency_ms        INTEGER NOT NULL,
-    outcome           TEXT NOT NULL,
-    cost_micros       INTEGER NOT NULL DEFAULT 0
+    outcome           TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
@@ -304,17 +299,16 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 // Each migration is idempotent — checks whether the column exists before
 // adding it. SQLite does not support `ADD COLUMN IF NOT EXISTS`, so the
 // presence check uses PRAGMA table_info.
+//
+// Currently empty (cost_micros was added in v0.6 and removed in v0.7 —
+// the column will remain in upgraded-from-v0.6 databases as an unused
+// nullable field, which is harmless). Add new column migrations here as
+// the schema evolves.
 func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 	type colMigration struct {
 		table, column, ddl string
 	}
-	migrations := []colMigration{
-		{
-			table:  "usage",
-			column: "cost_micros",
-			ddl:    `ALTER TABLE usage ADD COLUMN cost_micros INTEGER NOT NULL DEFAULT 0`,
-		},
-	}
+	migrations := []colMigration{}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
 		if err != nil {
@@ -738,10 +732,10 @@ type sqliteUsage struct{ db *sql.DB }
 func (s *sqliteUsage) Record(ctx context.Context, u Usage) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage(ts, api_key_id, user_id, model, protocol,
-		    prompt_tokens, completion_tokens, latency_ms, outcome, cost_micros)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		    prompt_tokens, completion_tokens, latency_ms, outcome)
+		 VALUES(?,?,?,?,?,?,?,?,?)`,
 		u.TS.Unix(), u.APIKeyID, u.UserID, u.Model, u.Protocol,
-		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome, u.CostMicros)
+		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome)
 	return err
 }
 
@@ -760,7 +754,7 @@ func (s *sqliteUsage) SumTokensSince(ctx context.Context, apiKeyID string, since
 func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_micros
+		        prompt_tokens, completion_tokens, latency_ms, outcome
 		 FROM usage ORDER BY ts DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -772,7 +766,7 @@ func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 func (s *sqliteUsage) RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_micros
+		        prompt_tokens, completion_tokens, latency_ms, outcome
 		 FROM usage WHERE user_id = ? ORDER BY ts DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -787,7 +781,7 @@ func scanUsage(rows *sql.Rows) ([]Usage, error) {
 		var u Usage
 		var ts int64
 		if err := rows.Scan(&u.ID, &ts, &u.APIKeyID, &u.UserID, &u.Model, &u.Protocol,
-			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome, &u.CostMicros); err != nil {
+			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome); err != nil {
 			return nil, err
 		}
 		u.TS = time.Unix(ts, 0)

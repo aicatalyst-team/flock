@@ -207,9 +207,6 @@ func recordEgress(ctx context.Context, st store.Store, vendor, model string, sta
 		TS: time.Now(), APIKeyID: keyID, UserID: userID,
 		Model: model, Protocol: vendor,
 		LatencyMS: int(dur.Milliseconds()), Outcome: outcome,
-		// CostMicros stays 0 here — egress doesn't yet extract token
-		// counts from the streamed response body, so we can't compute
-		// a real cost. Follow-up: parse OpenAI/Anthropic SSE usage events.
 	})
 	_ = st.Audit().Record(ctx, store.AuditEntry{
 		TS: time.Now(), Actor: userID,
