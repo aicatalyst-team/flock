@@ -25,6 +25,12 @@ type Entry struct {
 	Hardware           HardwareSpec `yaml:"hardware"`
 	Tags               []string     `yaml:"tags"`
 	Sharding           ShardingSpec `yaml:"sharding,omitempty"`
+	// Fallback is an ordered list of catalog IDs to try when the primary
+	// model can't serve a request (engine down, model not loaded, 503,
+	// timeout, etc.). Tried in order; the first that succeeds wins.
+	// Silent to clients — the response carries the requested model name.
+	// Operators see fallback hits in the audit log + stderr.
+	Fallback []string `yaml:"fallback,omitempty"`
 }
 
 // SourceSpec describes where to fetch model weights from.

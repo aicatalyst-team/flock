@@ -45,6 +45,19 @@ type Server struct {
 
 func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger, orch *scheduler.Orchestrator) *Server {
 	routed := router.New(eng, st)
+
+	// Wire catalog-driven fallback chains: when a request to model X fails,
+	// retry against X's catalog fallback list in order. Closure captures the
+	// catalog slice — fresh lookups happen per call so a catalog reload would
+	// be observed (catalog hot-reload isn't shipped yet but this leaves room).
+	routed.SetFallbackResolver(func(modelID string) []string {
+		entry := models.FindByID(cat, modelID)
+		if entry == nil {
+			return nil
+		}
+		return entry.Fallback
+	})
+
 	openaiH := &api.Handler{
 		Engine:  routed,
 		Store:   st,
