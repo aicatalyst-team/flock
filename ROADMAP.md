@@ -64,9 +64,23 @@ With that filter, here's what genuinely moves the needle:
 | RBAC roles / OIDC / SSO | Enterprise auth is feature creep for a gateway on a trusted network. Per-user keys + quotas + audit already cover the accountability story. |
 | Cost / billing tracking | Not Flock's job. LLM API charges go to the operator's account; how they slice cost by team / project / user is a manager-side reporting concern, not a gateway concern. The `audit_log` + `usage` tables expose enough data for anyone to roll their own. |
 | Billing-per-user analytics dashboards | Same reasoning — manager-side concern. |
+| Unified billing across local + vendor calls | Same family as cost / billing tracking — out. Operators reconcile vendor invoices themselves; the `usage` table records what each call cost in tokens, not dollars. |
+| Policy-based routing by user / request shape | "By user" routing is tenant-isolation = enterprise creep, same family as RBAC. "By request shape" is already handled — the router picks engines by capability (vision vs embedding vs chat) and falls back via the catalog `fallback:` chain. Anything beyond that is a content-policy concern (see below). |
 | Content policies / output filtering | Different operational concern; happens at the client (Claude Code, Cursor) layer, not the gateway. |
 | Privacy-by-default RAG | RAG is a separate workload (vector store, retrieval, ranking pipelines). If needed, build it as a sibling project that depends on Flock's embeddings + chat endpoints. |
 | Video / real-time voice | Already out of scope — see [§ Out of scope](#out-of-scope). |
+
+---
+
+## Gateway plumbing improvements
+
+Not strategic bets — small, scoped extensions of subsystems that already exist. Listed here so they don't get lost between "modalities" and "bets."
+
+| # | Item | What it adds | Where it lives | Effort | Target |
+| --- | --- | --- | --- | --- | --- |
+| P1 | **Bedrock + Vertex egress adapters** | Two more vendor routes alongside the existing Anthropic + OpenAI fallback. Lets orgs with AWS / GCP spend keep using their existing billing path. | `internal/api/egress.go` — new vendor blocks; SigV4 signing for Bedrock, ADC token for Vertex. Config: `router.fallback.bedrock_url` / `_region`, `router.fallback.vertex_url` / `_project`. | **S** | v0.7 |
+| P2 | **OpenTelemetry / OTLP traces** | Span coverage across gateway → router → engine driver. Lines up with the existing Prometheus metrics so ops teams can correlate latency to a specific node. | Wrap chi handlers with `otelhttp`; add spans in `internal/router/router.go` + each `internal/engines/*.go`. New config: `observability.otlp_endpoint`. | **S** | v0.7 |
+| P3 | **Reference Grafana dashboards** | Importable JSON for cluster overview, per-model, per-user / per-key — covers the same Prometheus metrics already exposed. | New `dashboards/` directory with three `.json` files; documented in README. No code change. | **XS** | v0.7 |
 
 ---
 
@@ -98,6 +112,8 @@ The only **breaking changes** are (2) router rewrite and (5) package layout — 
 v0.4.0 (done)  → Vision (Ollama path)
 v0.5.0 (done)  → Embeddings (Ollama path)
 v0.7           → Latency-aware fallback (bet 1) · Edge runtime / NAS packages (bet 3)
+                 · Bedrock + Vertex egress (P1) · OpenTelemetry traces (P2)
+                 · Reference Grafana dashboards (P3)
 v0.8           → Hardware abstraction (bet 2) · Signed catalogs (bet 4) · Image generation · Rerank
 v0.9           → ASR · TTS
 v1.0           → Embeddable Go library (bet 5) · API stability commitment
