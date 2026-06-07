@@ -1,6 +1,6 @@
 # Roadmap — multimodal + accessibility (v0.4 → v1.0)
 
-Last updated: 2026-06-07 · Current release: **v0.3.0** · See [TASKS.md](TASKS.md) for the per-task tracker.
+Last updated: 2026-06-07 · Current release: **v0.4.0** · See [TASKS.md](TASKS.md) for the per-task tracker.
 
 This file is the strategic plan. It groups everything into three buckets — **modalities that fit Flock's architecture**, **modalities that stretch it**, and the **eight accessibility bets** that turn open-source AI from "I can run a model" into "my team uses this in production."
 
@@ -16,8 +16,8 @@ These reuse the existing Engine interface, router, and store. They add endpoints
 
 | Item | Endpoint | Engines that support it | Compat notes | Status |
 | --- | --- | --- | --- | --- |
-| **Vision (image input)** | `POST /v1/chat/completions` with `image_url` content blocks | Ollama (`images: []`), vLLM, MLX-LM | `engines.Message.Content` → needs `Images []string`. OpenAI content-array parsing in `internal/api/openai.go`. Anthropic `image` blocks in `internal/api/anthropic.go`. Catalog already has `vision` capability. | **Shipped in v0.4 (this commit)** for Ollama |
-| **Embeddings** | `POST /v1/embeddings` | Ollama (`/api/embeddings`), vLLM (`/v1/embeddings`), MLX-LM | New `Engine.Embed(ctx, model, input) []float32` method. Catalog entries get `embedding` capability + `embedding_dim`. Router picks by capability. | Planned |
+| **Vision (image input)** | `POST /v1/chat/completions` with `image_url` content blocks | Ollama (`images: []`), vLLM, MLX-LM | `engines.Message.Content` → needs `Images []string`. OpenAI content-array parsing in `internal/api/openai.go`. Anthropic `image` blocks in `internal/api/anthropic.go`. Catalog already has `vision` capability. | **Shipped in v0.4** (Ollama path) |
+| **Embeddings** | `POST /v1/embeddings` | Ollama (`/api/embeddings`), vLLM (`/v1/embeddings`), MLX-LM | New `Engine.Embed(ctx, model, input) []float32` method. Catalog entries get `embedding` capability + `embedding_dim`. Router picks by capability. | **Shipped in v0.4** (Ollama path) |
 | **Rerank** | `POST /v1/rerank` (Cohere shape) | BGE / Jina / mxbai cross-encoders via llama-server `/v1/rerank` or TEI | Deferred — no Ollama path; needs direct llama-server adapter or TEI engine. Tracked for after the llama.cpp single-node driver lands (v0.6). | Deferred |
 
 ### B. Stretches the gateway — works but requires new code paths (v0.5–v0.6)

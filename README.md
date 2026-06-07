@@ -255,7 +255,7 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 5. **OpenAI- and Anthropic-compatible from day one.** Same endpoint serves both protocols.
 6. **Permissive open source.** Apache 2.0. No open-core gotchas.
 7. **The CLI is the source of truth.** Every user-facing capability ships as a `flock` CLI command first. The web UI is a thin wrapper — it invokes the same Go functions the CLI invokes, never reimplements logic. If you can do it in the UI, you can do it in CI / scripts / SSH sessions, and vice versa.
-8. **Adding or switching a model is one action.** No hand-written YAML, no manual GGUF downloads, no separate worker-side setup. `flock model add hf:owner/repo` does the rest — picks engine, picks quant, shards if needed, distributes weights, warms the model. `flock default <id>` switches the default with zero downtime.
+8. **Adding or switching a model is one action.** No hand-written YAML, no manual GGUF downloads, no separate worker-side setup. `flock model add hf:owner/repo` does the rest — picks engine, picks quant, shards if needed, distributes weights, warms the model. The default model is auto-picked from hardware on first `flock up`; to change it later, set `router.default_model` in `~/.flock/config.yaml` and restart, or `FLOCK_DEFAULT_MODEL=<id> flock up`.
 
 ---
 
@@ -640,76 +640,79 @@ Flock follows a strict "no config required for defaults" rule. Every flag has a 
 # ~/.flock/config.yaml
 listen: ":8080"
 data_dir: "~/.flock"
-mesh:
-  enabled: true
-  tailnet_name: ""   # auto-generated on first up
 auth:
-  initial_admin_key: ""   # auto-generated, shown in CLI
+  require_keys: true   # set false for local-only dev mode
 ```
+
+The initial admin key is auto-generated on first `flock up` and printed to stderr — copy it then. There is no `auth.initial_admin_key` field; the key lives in the SQLite store, not the YAML.
 
 ### Full reference
 
-```yaml
-listen: ":8080"
-external_url: "https://flock.example.com"   # for redirects in UI; default = listen addr
-data_dir: "~/.flock"
+Every field below is parsed by `internal/config/config.go`. Anything not in this list is silently ignored.
 
-mesh:
-  enabled: true
-  backend: tailscale         # tailscale | netbird | lan
-  tailnet_name: ""           # auto-generated if empty
-  auth_key: ""               # for headless tailnet login
+```yaml
+listen: ":8080"                       # HTTP listen address (used by leader and workers)
+external_url: ""                      # public URL printed in UI; empty → use listen addr
+data_dir: "~/.flock"                  # root for state.db, models, logs
+log_level: "info"                     # debug | info | warn | error
+catalog_dir: ""                       # empty → built-in catalog/ directory
 
 storage:
-  type: sqlite               # sqlite | postgres
+  type: "sqlite"                      # only sqlite ships today
   dsn: "~/.flock/state.db"
   models_dir: "~/.flock/models"
-  cache_size_gb: 200
 
 auth:
-  oidc:
-    enabled: false
-    issuer: ""
-    client_id: ""
-    client_secret: ""
-  api_keys:
-    require: true
-    initial_admin_key: ""    # auto-generated
+  require_keys: true                  # set false to disable API-key auth (dev only)
 
-scheduler:
-  policy: spread             # spread | binpack
-  replication: auto          # auto | always | never
-  drain_timeout_s: 60
+engine:
+  preferred: "ollama"                 # ollama | vllm | mlx | llamacpp
+  ollama_endpoint: "http://127.0.0.1:11434"
+  vllm_endpoint:   "http://127.0.0.1:8000"
+  mlx_endpoint:    "http://127.0.0.1:8080"
 
 router:
-  default_model: qwen-coder-14b
+  default_model: ""                   # empty → auto-pick on first up
   sticky_sessions: true
   fallback:
-    enabled: true
-    providers:
-      anthropic:
-        api_key_env: ANTHROPIC_API_KEY
-        models: [claude-opus-4-7, claude-sonnet-4-6]
-      openai:
-        api_key_env: OPENAI_API_KEY
-        models: [gpt-4o, o3]
-
-observability:
-  prometheus: ":9090"
-  otlp_endpoint: ""
-  log_level: info
+    enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
+    anthropic_url: "https://api.anthropic.com"
+    openai_url:    "https://api.openai.com"
 ```
 
-### Per-node config
+### Environment variables
 
-Workers don't usually need their own config — they pull settings from the leader. To override (e.g. force a specific engine), drop `~/.flock/node.yaml`:
+| Var | Overrides |
+|---|---|
+| `FLOCK_LISTEN` | `listen` |
+| `FLOCK_DATA_DIR` | `data_dir` |
+| `FLOCK_LOG_LEVEL` | `log_level` |
+| `FLOCK_EXTERNAL_URL` | `external_url` |
+| `FLOCK_ENGINE` | `engine.preferred` |
+| `FLOCK_OLLAMA_ENDPOINT` / `FLOCK_VLLM_ENDPOINT` / `FLOCK_MLX_ENDPOINT` | corresponding `engine.*_endpoint` |
+| `VLLM_API_KEY` | bearer token sent to a vLLM server (no YAML equivalent) |
+| `FLOCK_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
+| `FLOCK_DEFAULT_MODEL` | `router.default_model` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
+| `FLOCK_CATALOG_DIR` | `catalog_dir` |
 
-```yaml
-engines:
-  preferred: vllm            # vllm | mlx | llamacpp | ollama
-  vllm:
-    image: vllm/vllm-openai:latest
-    args: ["--enable-prefix-caching"]
+### Not yet configurable (roadmap)
+
+These features are mentioned elsewhere in this README but have no YAML knob today. The list is here so you don't waste time guessing.
+
+- **Mesh backend selection** — only the LAN backend ships in v0.4. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
+- **OIDC for the UI** — `internal/auth/` ships API keys only. The UI uses a pasted admin key for now.
+- **Scheduler policy / replication / drain timeout** — `internal/scheduler/` ships sharding orchestration only; placement is naive least-loaded with no tunables.
+- **Per-model fallback routing** — the fallback chain is all-or-nothing today (any unknown `claude-*` → Anthropic, any unknown `gpt-*` → OpenAI). Per-model whitelists are not parsed.
+- **Observability endpoints / OTLP** — Prometheus is hardcoded to the main `/metrics` endpoint; no OTLP exporter, no separate Prometheus listener.
+- **Per-node config (`~/.flock/node.yaml`)** — not read. Workers inherit engine endpoints from the leader's config or their own env vars.
+
+### Per-node engine override
+
+Workers run their own engine binary. To point a worker at a non-default endpoint, set env vars before `flock join`:
+
+```bash
+FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://127.0.0.1:8000 flock join http://leader:8080?token=...
 ```
 
 ---
@@ -884,12 +887,18 @@ You have **three ways** to wire up a tool: the CLI, the dashboard, or copy-paste
 ### Fastest: `flock connect <client>`
 
 ```bash
-flock connect claude-code           # prints env vars, pre-filled with your URL + token
-flock connect cursor                # prints Cursor settings, pre-filled
-flock connect --list                # 10 supported clients today
+flock connect claude-code                          # prints env vars, pre-filled with your URL + token
+flock connect cursor                               # prints Cursor settings, pre-filled
+flock connect --list                               # supported clients today
+
+# Overrides
+flock connect cursor --model qwen-coder-14b        # suggest a specific model
+flock connect aider --base-url https://flock.lan   # override gateway URL
+FLOCK_TOKEN=sk-orc-… flock connect aider           # use a non-default token
+flock connect aider --token sk-orc-…               # same, via flag
 ```
 
-Token comes from `$FLOCK_TOKEN` if set, otherwise `~/.flock/admin.key` (written when you ran `flock up`).
+Token comes from `--token`, then `$FLOCK_TOKEN`, then `~/.flock/admin.key` (written when you ran `flock up`). Base URL comes from `--base-url`, then `external_url` in `~/.flock/config.yaml`, then `http://localhost:<listen>`.
 
 ### Reversing: `flock disconnect <client>`
 
@@ -906,9 +915,23 @@ Prints the exact commands to roll back whatever `flock connect` set up — does 
 ```bash
 flock invite hadi --quota 100000
 # Creates a user-scope token with a 100k tokens/day cap.
-# Prints a paste-into-Slack markdown card with snippets for all 10 clients.
+# Prints a paste-into-Slack markdown card with snippets for every supported client.
 # Recipient picks the tool they use and pastes — done.
+
+# Filter the share card to specific clients
+flock invite alice --clients claude-code,cursor,curl
+
+# Suggest a specific default model in the snippets
+flock invite bob --model qwen-coder-14b
+
+# Override the gateway URL printed in the card (useful behind a reverse proxy)
+flock invite carol --base-url https://flock.example.com
+
+# Machine-readable output for scripting
+flock invite dave --format json | jq '.token'
 ```
+
+Flags: `--quota N` (daily token cap, 0 = unlimited), `--clients id1,id2,…` (subset of clients to include), `--format markdown|json`, `--base-url <url>`, `--model <id>`. The token is shown exactly once — capture it then. Revoke later with `flock token revoke <id>`.
 
 ### In the dashboard
 
@@ -1009,10 +1032,11 @@ print(resp.content[0].text)
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/v1/chat/completions` | Streaming + non-streaming |
+| `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path) |
+| `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
 | `GET` | `/v1/models` | Lists available models |
 
-(Planned: `/v1/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`.)
+(Planned: `/v1/completions`, `/v1/audio/transcriptions`, `/v1/rerank`.)
 
 ### Anthropic surface
 
@@ -1177,7 +1201,7 @@ Common issues:
 
 - Check GPU utilization (`flock node show <id>`). If pinned at 100% under load: add a replica or upgrade.
 - Sticky sessions disabled? Re-enable for better KV cache reuse.
-- Model is CPU-falling-back? `flock logs --node <id>` will show.
+- Model is CPU-falling-back? Check the leader's stderr where `flock up` is running — engine driver errors are logged there. Per-node log streaming is on the roadmap.
 
 ### Claude Code shows "model not found"
 

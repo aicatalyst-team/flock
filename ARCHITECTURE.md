@@ -308,7 +308,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 
 This is a load-bearing architectural rule, not a style preference:
 
-**The `flock` CLI is the canonical control surface.** Every user-facing mutation — `flock model add`, `flock model remove`, `flock default <id>`, `flock shard create`, `flock node drain`, `flock token create`, etc. — is implemented as an exported Go function in `internal/control/`. The CLI command in `cmd/flock/` is a thin arg-parser that calls this function. The admin HTTP endpoint that backs the same action in the web UI is a thin request-decoder that calls the **same** function.
+**The `flock` CLI is the canonical control surface.** Every user-facing mutation — `flock model add`, `flock model remove`, `flock shard create`, `flock node drain`, `flock token create`, etc. — is implemented as an exported Go function in `internal/control/`. The CLI command in `cmd/flock/` is a thin arg-parser that calls this function. The admin HTTP endpoint that backs the same action in the web UI is a thin request-decoder that calls the **same** function.
 
 ```
    ┌──────────────┐         ┌──────────────┐
@@ -935,61 +935,82 @@ git push --tags        # CI builds binaries + UI, signs, publishes to GH Release
 ```bash
 git clone https://github.com/hadihonarvar/flock
 cd flock
-make dev               # installs deps, runs tests, starts a local cluster
-make ui                # runs the Next.js UI in watch mode
+make check             # lint + test + build (this is what CI runs)
+./flock up             # boots a single-node leader against local Ollama
 ```
 
-`make dev` brings up a single-node Flock against a local Ollama and points your browser at the UI. From here, edit Go code → save → it hot-reloads.
+You only need Go 1.22+ and a working Ollama install (`brew install --cask ollama` on macOS, or `curl -fsSL https://ollama.com/install.sh | sh` on Linux). No Docker, no Python, no Node — the web UI is a single embedded HTML file compiled into the binary.
+
+The first `flock up` will:
+
+1. Bootstrap `~/.flock/state.db` (SQLite)
+2. Print an admin API key to stderr — copy it; it's shown only once
+3. Auto-pick a model based on hardware (`flock model search` for the list)
+4. Start serving on `http://localhost:8080` (OpenAI + Anthropic API + admin UI)
+
+From there: edit code → `make build` → restart `./flock up` → done.
+
+### Make targets
+
+The Makefile is intentionally tiny — every target maps to a single `go` invocation. Run any of these from the repo root:
+
+| Target | What it runs |
+|---|---|
+| `make build` (default) | `go build -trimpath -o flock ./cmd/flock` |
+| `make test` | `go test ./...` |
+| `make lint` | `go vet ./...` (plus `.golangci.yml` rules when you run `golangci-lint` separately) |
+| `make check` | lint + test + build, in that order. **This is what every PR must pass.** |
+| `make run` | `make build && ./flock up` |
+| `make tidy` | `go mod tidy` |
+| `make clean` | remove the `flock` binary and `data/`, `.flock/` working dirs |
+
+There is no `make dev`, `make ui`, or `make test-e2e` — those are not needed for a hot-reload-free Go binary with an embedded UI. End-to-end tests run inline as `go test ./...` (look for `_test.go` files that spin up an `httptest.Server`).
 
 ### Finding your way around
 
-Start with these files in order:
+Start with these files in order. Each top-of-file comment explains what the package owns; no file exceeds ~600 lines.
 
-1. `cmd/flock/main.go` — the entrypoint; routes subcommands
-2. `internal/controlplane/server.go` — the leader's HTTP server
-3. `internal/agent/agent.go` — the per-node loop
-4. `internal/api/openai_adapter.go` — translates OpenAI requests
-5. `internal/api/anthropic_adapter.go` — translates Anthropic requests
-6. `internal/scheduler/scheduler.go` — model placement decisions
-7. `internal/engines/vllm.go` — example engine driver
-
-Each file has a comment block at the top explaining what it owns. No file exceeds 600 lines; if you add to one and it crosses 800, split it.
+1. `cmd/flock/main.go` — switch statement over subcommand verbs
+2. `cmd/flock/cmd_*.go` — one file per CLI subcommand; each is a thin arg-parser that delegates to `internal/control/`
+3. `internal/controlplane/server.go` — leader HTTP server (chi router); wires data-plane + admin routes
+4. `internal/api/openai.go` — OpenAI protocol adapter (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`)
+5. `internal/api/anthropic.go` — Anthropic protocol adapter (`/v1/messages`, `/v1/messages/count_tokens`)
+6. `internal/api/egress.go` — fallback proxy to real Anthropic/OpenAI when a request asks for a vendor model
+7. `internal/control/control.go` — every mutating operation in one place; both CLI and admin HTTP call into here (the load-bearing rule from § CLI / Admin API / Web UI contract above)
+8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
+9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
+10. `internal/engines/types.go` — `Engine` interface; `internal/engines/{ollama,vllm,mlx,llamacpp_rpc}.go` are the drivers
+11. `internal/agent/agent.go` — worker heartbeat loop; `internal/agent/server.go` is the worker HTTP server
+12. `internal/store/sqlite.go` — schema, migrations, query helpers
+13. `internal/ui/index.html` (embedded via `//go:embed` in `internal/ui/embed.go`) — admin dashboard, single HTML + Tailwind via CDN
 
 ### Common contributor tasks
 
 | Task | Touch these files |
 |---|---|
-| Add a new inference engine | `internal/engines/<name>.go`, register in `internal/engines/registry.go` |
-| Add a new model to the catalog | `catalog/<id>.yaml` |
-| Add a new API surface (e.g. Cohere) | `internal/api/<name>_adapter.go` |
-| Change scheduler policy | `internal/scheduler/policy_*.go` |
-| Add a UI page | `web/src/pages/<name>.tsx` |
-| Add a CLI command | `cmd/flock/cmd_<name>.go` |
-| Add a metric | declare in `internal/metrics/metrics.go`, increment where relevant |
-
-### Tests
-
-```bash
-make test            # unit
-make test-integration  # spins up an in-process cluster
-make test-e2e        # full cluster across goroutines, real Ollama
-```
-
-Every PR runs all three in CI.
+| Add a new inference engine | `internal/engines/<name>.go` (implement `Engine`), register in `internal/engines/registry.go` |
+| Add a new model to the catalog | `catalog/<id>.yaml` — see [catalog/README.md](catalog/README.md) for the schema |
+| Add a new API surface (e.g. Cohere) | `internal/api/<name>.go`, wire route in `internal/controlplane/server.go` |
+| Add a new CLI subcommand | `cmd/flock/cmd_<name>.go` + add a case in `cmd/flock/main.go` + add the mutating function in `internal/control/` first (CLI is the source of truth) |
+| Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
+| Add a UI page or tab | edit `internal/ui/index.html` directly; the JS is inline at the bottom |
+| Add a metric | declare in `internal/metrics/metrics.go`, increment at the relevant call site |
+| Add a config field | extend the `Config` struct in `internal/config/config.go`, add a default in `Default()`, optionally read an env var in `applyEnv()`, document in [README.md → Full reference](../README.md#full-reference) |
 
 ### Submitting a PR
 
-1. Open an issue first if the change is non-trivial
-2. Branch: `feat/<short-name>` or `fix/<short-name>`
-3. One change per PR
-4. Update tests + docs (the same PR)
-5. `make check` must pass (lint, test, build)
-6. Two maintainer reviews to merge
+1. Open a discussion or issue first if the change is non-trivial.
+2. Branch from `main`: `feat/<short-name>` or `fix/<short-name>`.
+3. One change per PR.
+4. Update tests + docs in the same PR (no follow-up "I'll fix docs later" PRs).
+5. `make check` must pass locally.
+6. If the change adds or modifies a CLI surface, the README CLI reference must be updated.
+7. If the change adds a config field, the README "Full reference" must include it.
 
 ### Communication
 
-- **GitHub Discussions** — design questions, RFCs
-- **GitHub Issues** — bugs, feature requests
+- **GitHub Discussions** — design questions, RFCs, "is this a bug?"
+- **GitHub Issues** — confirmed bugs, concrete feature requests
 - **Maintainer** — [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) (`hadi.work.ca@gmail.com`)
 
 ---
@@ -998,36 +1019,37 @@ Every PR runs all three in CI.
 
 ### Add a new inference engine
 
-1. Read `internal/engines/ollama.go` as the simplest example.
-2. Implement the `Engine` interface in `internal/engines/<name>.go`.
-3. Register in `internal/engines/registry.go` — declare what hardware you support.
-4. Add tests against a fake binary (don't require a real GPU in CI).
-5. Document required system packages in `README.md → Installation`.
+1. Read `internal/engines/ollama.go` as the simplest example (~150 LOC, no GPU detection magic).
+2. Implement the `Engine` interface (`internal/engines/types.go`) in `internal/engines/<name>.go`. The interface today: `Name()`, `Endpoint()`, `Health(ctx)`, `Chat(ctx, req)`, `Embed(ctx, req)` (optional), `LoadedModels(ctx)`.
+3. Register the driver in `internal/engines/registry.go` — declare what hardware kinds it supports so the agent can pick it automatically.
+4. Add a unit test against a fake HTTP server (`httptest.NewServer`) — don't require a real GPU in CI.
+5. Document any required system binaries in [README.md → Installation](../README.md#installation) and add a "What ships" bullet in [README.md → What's shipped](../README.md#whats-shipped).
 
 ### Add a new client protocol
 
 E.g. supporting Cohere's API:
 
-1. Read `internal/api/openai_adapter.go` as the simplest example.
-2. Create `internal/api/cohere_adapter.go` implementing translation in both directions.
-3. Wire the routes in `internal/controlplane/routes.go`.
-4. Document in `README.md → Supported clients`.
+1. Read `internal/api/openai.go` as the simplest example.
+2. Create `internal/api/cohere.go` with handlers that translate Cohere's request shape into `engines.ChatRequest` (the internal canonical form) and back.
+3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern).
+4. Document in [README.md → Supported clients](../README.md#supported-clients) and in [README.md → API reference](../README.md#api-reference).
 
 ### Add a new mesh backend
 
-E.g. supporting plain WireGuard without Tailscale:
+E.g. swapping LAN for Tailscale tsnet:
 
-1. Read `internal/mesh/tailscale.go` for the interface.
-2. Create `internal/mesh/wireguard.go`.
-3. Add a config option `mesh.backend: wireguard`.
+1. Read `internal/mesh/mesh.go` — the `Backend` interface and the existing LAN implementation.
+2. Create `internal/mesh/tailscale.go` (or similar) implementing the `Backend` interface.
+3. Surface a `mesh.backend` field in `internal/config/config.go` and switch on it in the controlplane bootstrap.
+4. Note the v0.4 "Not yet configurable" disclaimer in the README will need updating.
 
 ### Add a new storage backend
 
-1. Read `internal/store/sqlite.go`.
-2. Create `internal/store/<name>.go` implementing the `Store` interface.
-3. Add migration runner for that backend.
-4. Add `storage.type` enum value.
+1. Read `internal/store/sqlite.go` for the table layout and the `Store` interface.
+2. Create `internal/store/<name>.go` implementing the same interface (e.g. `postgres.go` for HA).
+3. Add a migration runner for the new backend.
+4. Switch on `storage.type` in `internal/store/open.go`.
 
 ### Add a new model to the catalog
 
-Just add `catalog/<id>.yaml`. The catalog is loaded at startup; no code change needed.
+Add `catalog/<id>.yaml`. The catalog is loaded at startup; no code change needed. See [catalog/README.md](catalog/README.md) for the schema and required fields.

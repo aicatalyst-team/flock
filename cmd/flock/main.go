@@ -11,7 +11,7 @@ import (
 )
 
 // version is overwritten at link time via -ldflags.
-var version = "0.2.0-dev"
+var version = "0.4.0-dev"
 
 func main() {
 	if len(os.Args) < 2 {

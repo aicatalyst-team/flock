@@ -147,7 +147,7 @@
       <div class="max-w-6xl mx-auto px-6 py-20 md:py-28">
         <div class="max-w-3xl">
           <div class="flex flex-wrap gap-2">
-            <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">v0.1.0</span>
+            <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">v0.4.0</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">100% free</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">open source · Apache-2.0</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">no telemetry</span>
@@ -281,8 +281,8 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
         <p class="mt-6 text-center text-slate-400 text-sm max-w-2xl mx-auto leading-relaxed">
           Plus any model on HuggingFace via <code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">flock model add hf:owner/repo</code>
           or any Ollama tag via <code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">flock model add ollama:&lt;tag&gt;</code>.
-          Vision, embeddings, and speech endpoints are on the roadmap (see
-          <a href="https://github.com/hadihonarvar/flock/blob/main/TASKS.md" class="text-emerald-400 hover:text-emerald-300 underline">TASKS.md</a>).
+          Vision (image input on chat) and embeddings are live as of v0.4 via the Ollama path. Speech endpoints are on the roadmap (see
+          <a href="https://github.com/hadihonarvar/flock/blob/main/ROADMAP.md" class="text-emerald-400 hover:text-emerald-300 underline">ROADMAP.md</a>).
         </p>
       </div>
     </section>
@@ -1508,10 +1508,11 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
               <li>• Ollama / vLLM / MLX / llama.cpp drivers</li>
               <li>• Per-user keys, quotas, audit, usage metering, Prometheus</li>
               <li>• Hybrid local + Anthropic/OpenAI fallback</li>
-              <li>• Multi-node routing with heartbeat + placements</li>
+              <li>• Multi-node routing with heartbeat + placements (LAN mesh)</li>
               <li>• Sharding auto-orchestration (rpc-server + coordinator)</li>
-              <li>• Embedded web UI with full CLI parity</li>
-              <li>• Install one-liner + signed binaries (v0.1.0)</li>
+              <li>• Vision (image input on chat) + embeddings (Ollama path)</li>
+              <li>• Embedded web UI with full CLI parity (Connect, Playground, Nodes, Models, Shards, Tokens, Usage, Audit, Settings)</li>
+              <li>• Install one-liner + signed binaries</li>
             </ul>
           </div>
 
@@ -1519,13 +1520,13 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
             <h3 class="font-semibold text-blue-900 mb-3">→ Next (v0.5+)</h3>
             <ul class="space-y-1.5 text-sm text-blue-900">
               <li>• Tailscale (<code>tsnet</code>) mesh for NAT traversal + mTLS</li>
-              <li>• OIDC for web UI</li>
+              <li>• OIDC for web UI (paste-key auth today)</li>
               <li>• HMAC-based worker token mutual auth</li>
               <li>• Shard crash detection + auto-restart</li>
               <li>• Coordinator placement on workers (not just leader)</li>
               <li>• Auto-distribution of model weights to workers</li>
               <li>• LoRA adapter loading</li>
-              <li>• Vision + Whisper endpoints</li>
+              <li>• ASR (Whisper) + TTS endpoints</li>
               <li>• Postgres backend for HA control plane</li>
               <li>• AMD ROCm path</li>
             </ul>
