@@ -891,6 +891,16 @@ flock connect --list                # 10 supported clients today
 
 Token comes from `$FLOCK_TOKEN` if set, otherwise `~/.flock/admin.key` (written when you ran `flock up`).
 
+### Reversing: `flock disconnect <client>`
+
+```bash
+flock disconnect claude-code        # prints the unset + sk-ant-… export commands
+flock disconnect cursor             # GUI steps to clear the override
+flock disconnect --list             # same 10 clients
+```
+
+Prints the exact commands to roll back whatever `flock connect` set up — does NOT modify any shell, editor, or config file. You run the commands when you're ready. Once disconnected, the client talks straight to the vendor (`api.anthropic.com`, `api.openai.com`); nothing about your Flock host needs to change. Re-run `flock connect <client>` anytime to go back.
+
 ### For a teammate: `flock invite <name>`
 
 ```bash

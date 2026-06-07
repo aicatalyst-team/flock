@@ -394,7 +394,15 @@ Or via env: `FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://gpu:8000 flock up`. Th
 
 ## 🔌 Switch Claude Code back to real Anthropic
 
-You set three env vars to route Claude Code through Flock. To go back to using the real Anthropic API, unset them:
+You set three env vars to route Claude Code through Flock. The fastest way back:
+
+```bash
+flock disconnect claude-code
+```
+
+This prints the exact `unset` + `export` commands you need (and works for any of the 10 supported clients — `flock disconnect --list`). Paste what it prints, and you're back on `api.anthropic.com`.
+
+Manually, it's just unsetting the three env vars:
 
 ```bash
 unset ANTHROPIC_BASE_URL

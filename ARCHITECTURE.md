@@ -351,6 +351,7 @@ As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strict
 | CLI command | `internal/control/` function | Admin endpoint (in `internal/controlplane/`) |
 |---|---|---|
 | `flock connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | `POST /admin/v1/connect/snippet`, `GET /admin/v1/connect/clients` (in `admin_connect.go`) |
+| `flock disconnect <client>` | `control.DisconnectSnippet()` | (no HTTP endpoint — purely local string lookup; the reversal text is static per client) |
 | `flock invite <name>` | `control.Invite()` | `POST /admin/v1/invite` (in `admin_invite.go`) |
 | (dashboard-only) | — | `POST /admin/v1/healthcheck` (in `admin_healthcheck.go`) — calls `s.openaiH.ResolveModel()` + `s.router.Chat()` to send a tiny ping through the same path real requests take |
 
