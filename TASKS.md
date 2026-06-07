@@ -14,7 +14,7 @@ For user-facing docs see [README.md](README.md). For design rationale see [ARCHI
 - **M2.5 — sharding auto-orchestration (v0.4)**: ✅ `flock shard create <model> <N>` picks workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, persists shards + placement, Router routes to coordinator. Web UI "Shards" tab provides the same workflow. Failure rollback included.
 - **M3 — multi-tenant + observability**: ✅ done. Per-user keys / scopes / daily quotas / audit log / usage metering / Prometheus metrics / hybrid fallback to Anthropic + OpenAI. OIDC deferred to v0.4. **Onboarding track (M3-T20 → M3-T26) shipped 2026-06-05** — `flock connect`, `flock invite`, dashboard Connect + Playground + Invite tabs, `/admin/v1/healthcheck` endpoint, all wired through `internal/control/` per the CLI-source-of-truth rule. New admin endpoints in `internal/controlplane/admin_{connect,invite,healthcheck}.go` are the reference implementation of the M4-T20 pattern (admin handler is decode + auth + delegate to `internal/control/`).
 - **M2-T21 race fix**: ✅ shipped 2026-06-05. Router `getOrCreateRemote` TOCTOU window closed (held write lock through check-and-create); regression test under `-race` confirms exactly one engine cached per nodeID across 64 concurrent callers.
-- **M4 — polish**: ✅ minimal embedded UI shipped. LoRA / vision / Whisper / live migration deferred to v0.4.
+- **M4 — polish**: ✅ minimal embedded UI shipped. **Vision (M4-T03) shipped 2026-06-07** — image_url content blocks on `/v1/chat/completions` (Ollama path); `gemma4-12b`, `gemma4-26b`, `llama-4-scout`, `step-3.7-flash-sharded` carry the `vision` capability. **Embeddings (M4-T05) shipped 2026-06-07** — `POST /v1/embeddings` (Ollama path); `nomic-embed-text` is the default catalog entry. **Failure-based fallback chain shipped 2026-06-07** — catalog YAML `fallback: [next-id, …]`; router retries the chain on engine error / 5xx / timeout / model-not-loaded; transparent to clients; audit-logged. **Hardware-floor refusal shipped 2026-06-07** — `flock model add` checks `min_ram_gb` / `min_vram_gb`; `--force` overrides. **`flock disconnect <client>` shipped 2026-06-05** as the reversal counterpart to `flock connect`. LoRA / Whisper / live migration still deferred to v0.5+.
 - **Release tooling**: ✅ CI workflow, GoReleaser config, Homebrew formula, install.sh.
 - **Fixes**: ✅ 15 code-review findings addressed in commit `70ad076` (engine routing per backend, streaming goroutine leaks, audit log content, vLLM/MLX token accounting, Anthropic tool-block preservation, agent 401/404 handling, more).
 
@@ -35,20 +35,20 @@ These are the gaps between marketing copy and what the binary actually does toda
 
 **API surface**
 
-- **Embeddings endpoint** — `/v1/embeddings` not shipped. (tracked as M4-T05)
 - **Anthropic extended thinking** — `/v1/messages` accepts text + tool_use blocks; `thinking` blocks not yet supported. (tracked as M4-T12)
 - **Anthropic computer use** — `computer_20241022` / `bash_20241022` / `text_editor_20241022` tool types not yet handled. (tracked as M4-T13)
-- **Vision (OpenAI + Anthropic image inputs)** — text-only today. (tracked as M4-T03)
+- **Vision on Anthropic adapter** — image content blocks on `/v1/messages` not yet wired (OpenAI shape works via the Ollama path; Anthropic shape pending).
 - **Whisper transcription** — `/v1/audio/transcriptions` not shipped. (tracked as M4-T04)
+- **Rerank** — `/v1/rerank` deferred to v0.6 (needs cross-encoder backend; see ROADMAP).
 
 **Security / auth**
 
-- **OIDC** for the web UI — currently the UI takes a pasted admin key.
-- **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth.
+- **OIDC** for the web UI — currently the UI takes a pasted admin key. Explicitly killed in [ROADMAP](ROADMAP.md#explicitly-killed-or-sibling-projected-scope) — out of scope for OSS.
+- **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth. v0.5 target.
 
 **Operations / hardware**
 
-- **LoRA, live model migration** — both v0.4. (M4-T02, M4-T07)
+- **LoRA, live model migration** — both v0.5. (M4-T02, M4-T07)
 - **Postgres backend** for HA control plane — v1.0.
 - **AMD ROCm engine path** — v1.0.
 

@@ -413,7 +413,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Prometheus metrics endpoint (`/metrics`) — per-model RPS, latency, tokens, errors
 - Per-call usage records (model, protocol, tokens, latency, outcome) via `flock usage` and the Usage tab
 - Admin audit log via `flock audit` and the Audit tab
-- Pre-built Grafana dashboards — **planned**
+- Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Flock's `/metrics`.
 - OpenTelemetry traces — **planned**
 
 ### Developer experience

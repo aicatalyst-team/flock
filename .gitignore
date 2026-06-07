@@ -26,3 +26,6 @@ web/.next/
 *.test
 *.out
 coverage.txt
+
+# Private working docs (not for the public repo)
+ENTERPRISE.md

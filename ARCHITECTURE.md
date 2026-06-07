@@ -752,15 +752,15 @@ Export via OTLP. Defaults disabled; enable with `observability.otlp_endpoint`.
 
 `slog` to stdout in JSON. Levels: debug, info, warn, error. Request IDs propagated through context.
 
-### Dashboards (planned)
+### Dashboards
 
-A `dashboards/` directory with importable Grafana JSON will ship in a later milestone:
+Importable Grafana JSON lives in [`dashboards/`](../dashboards/) — see [`dashboards/README.md`](../dashboards/README.md) for import steps and the underlying metric schema.
 
-- `cluster-overview.json` — RPS, latency, GPU util, queue depth
-- `per-model.json` — TTFT, tok/s, cache hit rate, errors
-- `per-user.json` — calls, tokens, quota utilization
+- `cluster-overview.json` — total RPS, p50/p95/p99 latency, error rate, tokens/s (prompt vs completion), nodes up, loaded models inventory
+- `per-model.json` — same questions filtered to one model (Grafana template variable picks the model)
+- `per-node.json` — per-node fleet view: nodes up, models loaded per node, full inventory
 
-Until then, the Prometheus metrics at `/metrics` cover the same data — wire them into your own dashboards.
+All three bind to whichever Prometheus data source you pick at import time via the `${DS_PROMETHEUS}` variable. No edits required. Schema matches what `internal/metrics/metrics.go` actually emits — keep them in sync when you add a metric.
 
 ---
 

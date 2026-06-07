@@ -34,7 +34,7 @@ jobs:
       new_tag: ${{ steps.tag.outputs.new_tag }}
       release_type: ${{ steps.tag.outputs.release_type }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -56,14 +56,14 @@ jobs:
     if: needs.bump.outputs.new_tag != ''
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           # Check out the freshly-created tag, not main. Otherwise
           # GoReleaser sees an untagged commit and refuses to release.
           ref: ${{ needs.bump.outputs.new_tag }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
 
