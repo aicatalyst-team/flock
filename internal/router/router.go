@@ -27,7 +27,18 @@ import (
 
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/store"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// tracer is package-scoped so spans created here all carry the same
+// instrumentation-library name; the global TracerProvider (set in
+// internal/controlplane/tracing.go) decides whether they're exported
+// or no-op'd.
+var tracer trace.Tracer = otel.Tracer("github.com/hadihonarvar/flock/internal/router")
 
 // stderrTarget is a package-level writer so tests can capture fallback log
 // lines without touching the real os.Stderr.
@@ -121,38 +132,77 @@ func (r *Router) Delete(ctx context.Context, modelID string) error {
 // order. If every candidate fails, returns the PRIMARY's error since that's
 // what the operator actually asked for.
 func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	ctx, span := tracer.Start(ctx, "router.Embed",
+		trace.WithAttributes(
+			attribute.String("flock.model.requested", req.Model),
+		),
+	)
+	defer span.End()
+
 	chain := r.resolveChain(req.Model)
+	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
+
 	var primaryErr error
 	for i, candidate := range chain {
 		attempt := req
 		attempt.Model = candidate
 
-		eng, nodeID, err := r.pick(ctx, candidate)
+		attemptCtx, attemptSpan := tracer.Start(ctx, "router.Embed.attempt",
+			trace.WithAttributes(
+				attribute.Int("flock.attempt", i),
+				attribute.String("flock.model.candidate", candidate),
+				attribute.Bool("flock.is_fallback", i > 0),
+			),
+		)
+
+		eng, nodeID, err := r.pick(attemptCtx, candidate)
 		if err != nil {
+			attemptSpan.SetStatus(codes.Error, "pick failed")
+			attemptSpan.RecordError(err)
+			attemptSpan.End()
 			if i == 0 {
 				primaryErr = err
 			}
 			continue
 		}
+		attemptSpan.SetAttributes(
+			attribute.String("flock.engine", eng.Name()),
+			attribute.String("flock.node_id", nodeID),
+		)
 		ee, ok := eng.(engines.EmbedEngine)
 		if !ok {
+			err := fmt.Errorf("engine %s does not support embeddings", eng.Name())
+			attemptSpan.SetStatus(codes.Error, "engine missing Embed")
+			attemptSpan.RecordError(err)
+			attemptSpan.End()
 			if i == 0 {
-				primaryErr = fmt.Errorf("engine %s does not support embeddings", eng.Name())
+				primaryErr = err
 			}
 			continue
 		}
 		r.incInflight(nodeID)
-		res, err := ee.Embed(ctx, attempt)
+		res, err := ee.Embed(attemptCtx, attempt)
 		r.decInflight(nodeID)
 		if err == nil {
+			attemptSpan.SetStatus(codes.Ok, "")
+			attemptSpan.End()
 			if i > 0 {
 				logFallback(req.Model, candidate, "embed", primaryErr)
+				span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 			}
+			span.SetAttributes(attribute.String("flock.model.served", candidate))
 			return res, nil
 		}
+		attemptSpan.SetStatus(codes.Error, "embed failed")
+		attemptSpan.RecordError(err)
+		attemptSpan.End()
 		if i == 0 {
 			primaryErr = err
 		}
+	}
+	span.SetStatus(codes.Error, "all candidates failed")
+	if primaryErr != nil {
+		span.RecordError(primaryErr)
 	}
 	return engines.EmbedResponse{}, primaryErr
 }
@@ -162,41 +212,88 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 // even start the stream), walks the fallback chain in order. Once the
 // stream starts producing events, fallback is no longer possible —
 // downstream errors propagate as-is.
+//
+// Tracing note: router.Chat starts a span at request entry. Each fallback
+// attempt is a child span. The span covering the eventual successful
+// candidate stays open across the streaming relay and is closed by the
+// goroutine that drains the inner stream — so its duration matches actual
+// time-to-completion, not just the time to start the stream.
 func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	ctx, span := tracer.Start(ctx, "router.Chat",
+		trace.WithAttributes(
+			attribute.String("flock.model.requested", req.Model),
+			attribute.Bool("flock.stream", req.Stream),
+		),
+	)
+	// Note: span.End() is called in the streaming goroutine for the winning
+	// candidate (so its duration covers the full streamed response), or
+	// inline below if every candidate fails synchronously.
+
 	chain := r.resolveChain(req.Model)
+	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
+
 	var primaryErr error
 	for i, candidate := range chain {
 		attempt := req
 		attempt.Model = candidate
 
-		eng, nodeID, err := r.pick(ctx, candidate)
+		attemptCtx, attemptSpan := tracer.Start(ctx, "router.Chat.attempt",
+			trace.WithAttributes(
+				attribute.Int("flock.attempt", i),
+				attribute.String("flock.model.candidate", candidate),
+				attribute.Bool("flock.is_fallback", i > 0),
+			),
+		)
+
+		eng, nodeID, err := r.pick(attemptCtx, candidate)
 		if err != nil {
+			attemptSpan.SetStatus(codes.Error, "pick failed")
+			attemptSpan.RecordError(err)
+			attemptSpan.End()
 			if i == 0 {
 				primaryErr = err
 			}
 			continue
 		}
+		attemptSpan.SetAttributes(
+			attribute.String("flock.engine", eng.Name()),
+			attribute.String("flock.node_id", nodeID),
+		)
 		r.incInflight(nodeID)
-		inner, err := eng.Chat(ctx, attempt)
+		inner, err := eng.Chat(attemptCtx, attempt)
 		if err != nil {
 			r.decInflight(nodeID)
+			attemptSpan.SetStatus(codes.Error, "engine.Chat returned synchronously")
+			attemptSpan.RecordError(err)
+			attemptSpan.End()
 			if i == 0 {
 				primaryErr = err
 			}
 			continue
 		}
+		attemptSpan.SetStatus(codes.Ok, "stream started")
+		attemptSpan.End()
+
 		if i > 0 {
 			logFallback(req.Model, candidate, "chat", primaryErr)
+			span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 		}
+		span.SetAttributes(attribute.String("flock.model.served", candidate))
 
 		out := make(chan engines.StreamEvent, 16)
 		go func() {
 			defer r.decInflight(nodeID)
 			defer close(out)
+			defer span.End() // duration covers full streamed response
+			var tokenCount int
 			for ev := range inner {
+				if ev.Delta != "" {
+					tokenCount++
+				}
 				select {
 				case out <- ev:
 				case <-ctx.Done():
+					span.SetStatus(codes.Error, "client disconnected")
 					go func() {
 						for range inner {
 						}
@@ -204,9 +301,16 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 					return
 				}
 			}
+			span.SetAttributes(attribute.Int("flock.stream.events", tokenCount))
+			span.SetStatus(codes.Ok, "")
 		}()
 		return out, nil
 	}
+	span.SetStatus(codes.Error, "all candidates failed")
+	if primaryErr != nil {
+		span.RecordError(primaryErr)
+	}
+	span.End()
 	return nil, primaryErr
 }
 

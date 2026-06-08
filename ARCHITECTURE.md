@@ -735,19 +735,31 @@ Key series:
 
 ### Traces
 
-OpenTelemetry. Span hierarchy:
+OpenTelemetry/OTLP-HTTP. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to a collector URL — empty disables tracing with zero overhead (NoopTracerProvider).
+
+Span hierarchy as of v0.6:
 
 ```
-gateway.request
-├── auth.validate
-├── router.decide
-├── worker.inference
-│   ├── engine.send
-│   └── engine.stream
-└── usage.record
+http.request                                         (otelhttp on the chi router)
+└── router.Chat                                      (request entry; covers full stream)
+    ├── router.Chat.attempt (i=0, primary model)
+    │   └── ollama.Chat                              (engine driver; covers stream)
+    ├── router.Chat.attempt (i=1, fallback model)   (only on retriable failure)
+    │   └── ollama.Chat
+    └── … further attempts as catalog `fallback:` chain dictates
+
+http.request
+└── router.Embed
+    └── router.Embed.attempt (i=0)
+        └── ollama.Embed                             (when /v1/embeddings)
 ```
 
-Export via OTLP. Defaults disabled; enable with `observability.otlp_endpoint`.
+Per-span attributes:
+- `router.Chat` / `router.Embed`: `flock.model.requested`, `flock.fallback.chain_length`, `flock.fallback.used_at` (if fallback fired), `flock.model.served`, `flock.stream.events`
+- `router.Chat.attempt` / `router.Embed.attempt`: `flock.attempt`, `flock.model.candidate`, `flock.is_fallback`, `flock.engine`, `flock.node_id`
+- `ollama.Chat`: `flock.engine`, `flock.model`, `flock.engine.endpoint`, `flock.messages`, `http.status_code`, `flock.tokens.prompt`, `flock.tokens.completion`
+
+vLLM / MLX / llamacpp drivers follow the same pattern in v0.7. W3C `traceparent` propagation is always on (even when export is disabled), so Flock participates correctly when sandwiched between two services that both export upstream.
 
 ### Logs
 

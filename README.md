@@ -414,7 +414,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Per-call usage records (model, protocol, tokens, latency, outcome) via `flock usage` and the Usage tab
 - Admin audit log via `flock audit` and the Audit tab
 - Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Flock's `/metrics`.
-- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Flock emits one span per HTTP request via `otelhttp`, with W3C `traceparent` propagation. Empty endpoint = no-op (zero overhead).
+- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Flock emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `ollama.Chat` (engine call with prompt/completion token counts). vLLM / MLX / llamacpp drivers ship the same pattern in v0.7. W3C `traceparent` propagation is always on so Flock participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 
 ### Developer experience
 
