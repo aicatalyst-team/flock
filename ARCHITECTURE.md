@@ -249,7 +249,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 #### Out of scope for v0.4
 
 - The coordinator (`llama-server`) is placed on the highest-RAM host in the shard set — by default the strongest worker, not the leader. Override with `FLOCK_COORDINATOR_NODE=<node_id>` (or `local` to force leader). When the coordinator runs on a worker it's launched via the same `/v1/process/start` endpoint used for `rpc-server`, and the leader's router dials it at `<worker-address>:<coord_port>`. Single-machine sharding still pins the coordinator to the local supervisor.
-- Automatic GGUF **download** to the leader from upstream (the GGUF must still exist on the leader at `source.path` before `flock shard create` runs). **Distribution from leader to workers is now automatic** — `CreateSharded` calls the worker's `/v1/process/file` (HEAD by sha256) and uploads via `/v1/process/upload` when missing. Upload writes to `storage.models_dir/<basename>` on the worker, verified by sha256.
+- **Automatic GGUF download + distribution** fully closes M5-T12. For catalog entries with `source.type: huggingface` + `source.file:`, `CreateSharded` first downloads the GGUF from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir` on the leader (skipped if already present, partial→rename atomicity). Then for both `huggingface` and `file` types, fans the local file out to every shard host via `/v1/process/file` HEAD + `/v1/process/upload` POST (sha256-verified, skipped if the worker already has the file). No more manual `wget` to leader or `scp` to workers — `flock shard create <id>` is sufficient.
 - Live shard migration / rebalancing.
 - Dynamic shard count change.
 

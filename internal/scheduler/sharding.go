@@ -41,10 +41,15 @@ type Orchestrator struct {
 	Supervisor *agent.Supervisor // leader's own supervisor (coordinator runs here)
 	Log        *slog.Logger
 	HTTP       *http.Client
+	// ModelsDir is the local destination for HuggingFace GGUF downloads
+	// when a sharded catalog entry sets source.type=huggingface. Empty
+	// means HF auto-download is disabled — operators have to pre-place
+	// the file at source.path the old-fashioned way.
+	ModelsDir string
 }
 
 // New returns a configured orchestrator.
-func New(st store.Store, sup *agent.Supervisor, log *slog.Logger) *Orchestrator {
+func New(st store.Store, sup *agent.Supervisor, log *slog.Logger, modelsDir string) *Orchestrator {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -53,6 +58,7 @@ func New(st store.Store, sup *agent.Supervisor, log *slog.Logger) *Orchestrator 
 		Supervisor: sup,
 		Log:        log,
 		HTTP:       &http.Client{Timeout: 60 * time.Second},
+		ModelsDir:  modelsDir,
 	}
 }
 
@@ -97,14 +103,22 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	created := make([]store.Shard, 0, shardCount+1)
 	rpcEndpoints := make([]string, 0, shardCount)
 
-	// For source.type=file (sharded GGUFs), make sure every shard host has
-	// the file locally. Skips upload when the file is already present with
-	// matching sha. Was a v0.5 ask — without this, an admin had to scp the
-	// GGUF onto every machine before `flock shard create` could succeed.
-	if entry.Source.Type == "file" && entry.Source.Path != "" {
-		if err := o.ensureGGUFOnAllWorkers(ctx, workers, entry.Source.Path); err != nil {
+	// Resolve where the GGUF actually lives on the leader. For source.type=file
+	// this is just source.path; for source.type=huggingface we download it
+	// from HF into storage.models_dir first (closes M5-T12 fully — no more
+	// "wget the GGUF before shard create").
+	if entry.Source.Type == "file" || entry.Source.Type == "huggingface" {
+		localPath, err := o.ensureLocalGGUF(ctx, entry)
+		if err != nil {
+			return fmt.Errorf("resolve GGUF on leader: %w", err)
+		}
+		// Then fan it out to every shard host (sha256-skip if already present).
+		if err := o.ensureGGUFOnAllWorkers(ctx, workers, localPath); err != nil {
 			return fmt.Errorf("distribute GGUF: %w", err)
 		}
+		// Patch the path the coordinator will use so it points at the local
+		// resolved file rather than whatever source.path said.
+		entry.Source.Path = localPath
 	}
 
 	// Launch one rpc-server per worker.
