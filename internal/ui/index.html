@@ -340,7 +340,7 @@ async function renderPlayground() {
     root.innerHTML = `
       <div class="mb-3">
         <h2 class="text-lg font-semibold">Playground</h2>
-        <p class="text-xs text-slate-600">Send a chat request directly through the gateway — useful for sanity-checking before wiring up Cursor or Claude Code.</p>
+        <p class="text-xs text-slate-600">Send a chat / vision / embedding request directly through the gateway — sanity-check before wiring up Cursor or Claude Code.</p>
       </div>
 
       <div class="bg-white border border-slate-200 rounded p-4 space-y-3">
@@ -366,8 +366,17 @@ async function renderPlayground() {
           <label class="text-xs text-slate-500">Your message</label>
           <textarea id="pgUser" rows="4" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" placeholder="What can you do?"></textarea>
         </div>
+        <div>
+          <label class="text-xs text-slate-500">Image (optional — sent as image_url content block)</label>
+          <div class="flex gap-2 items-center">
+            <input id="pgImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="pgImagePreview()" class="text-xs" />
+            <button type="button" onclick="pgImageClear()" class="text-xs text-slate-500 hover:text-slate-700 hidden" id="pgImageClearBtn">clear</button>
+          </div>
+          <div id="pgImagePreview" class="hidden mt-2"></div>
+          <p class="text-xs text-slate-500 mt-1">Vision-capable models: gemma4-12b, gemma4-26b, llama-4-scout, qwen3-vl-*, step-3.7-flash-sharded. Pick one above before attaching.</p>
+        </div>
         <div class="flex gap-2">
-          <button id="pgSendBtn" onclick="pgSend()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Send</button>
+          <button id="pgSendBtn" onclick="pgSend()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Send chat</button>
           <button onclick="pgClear()" class="bg-slate-200 text-slate-700 px-4 py-2 rounded text-sm">Clear</button>
         </div>
       </div>
@@ -378,9 +387,95 @@ async function renderPlayground() {
           <div id="pgStatus" class="text-xs text-slate-500"></div>
         </div>
         <pre id="pgResponsePre" class="bg-slate-50 border border-slate-200 rounded p-4 text-sm whitespace-pre-wrap"></pre>
+      </div>
+
+      <!-- ─── Embeddings ─── -->
+      <div class="mt-6 bg-white border border-slate-200 rounded p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-semibold">Embeddings</div>
+            <div class="text-xs text-slate-500">POST /v1/embeddings — quick check that an embedding model returns a vector. Use the same Bearer key as chat.</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+          <div>
+            <label class="text-xs text-slate-500">Model</label>
+            <select id="pgEmbedModel" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">${options || "<option>nomic-embed-text</option>"}</select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Input</label>
+            <input id="pgEmbedInput" type="text" value="the quick brown fox" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="pgEmbed()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Get embedding</button>
+        </div>
+        <div id="pgEmbedResult" class="hidden text-xs">
+          <div id="pgEmbedStatus" class="text-slate-500 mb-1"></div>
+          <pre id="pgEmbedPre" class="bg-slate-50 border border-slate-200 rounded p-3 font-mono overflow-x-auto"></pre>
+        </div>
       </div>`;
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+// pgImage* helpers: read the selected file as a data: URL so we can embed
+// it in an OpenAI-style content array. Kept in-memory until Send.
+let pgImageDataURL = null;
+function pgImagePreview() {
+  const file = $("#pgImage").files[0];
+  const preview = $("#pgImagePreview");
+  const clearBtn = $("#pgImageClearBtn");
+  if (!file) { pgImageDataURL = null; preview.classList.add("hidden"); clearBtn.classList.add("hidden"); return; }
+  const r = new FileReader();
+  r.onload = () => {
+    pgImageDataURL = r.result;
+    preview.innerHTML = `<img src="${r.result}" class="max-h-32 rounded border border-slate-200" alt="preview">
+      <div class="text-xs text-slate-500 mt-1">${file.name} · ${(file.size/1024).toFixed(1)} KB</div>`;
+    preview.classList.remove("hidden");
+    clearBtn.classList.remove("hidden");
+  };
+  r.readAsDataURL(file);
+}
+function pgImageClear() {
+  pgImageDataURL = null;
+  $("#pgImage").value = "";
+  $("#pgImagePreview").classList.add("hidden");
+  $("#pgImageClearBtn").classList.add("hidden");
+}
+
+async function pgEmbed() {
+  const model = $("#pgEmbedModel").value;
+  const input = $("#pgEmbedInput").value.trim();
+  if (!input) { alert("Type something to embed."); return; }
+  const wrap = $("#pgEmbedResult");
+  const status = $("#pgEmbedStatus");
+  const pre = $("#pgEmbedPre");
+  wrap.classList.remove("hidden");
+  status.textContent = "embedding…";
+  pre.textContent = "";
+  const t0 = performance.now();
+  try {
+    const resp = await fetch("/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, input }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`${resp.status}: ${t}`);
+    }
+    const obj = await resp.json();
+    const vec = obj.data?.[0]?.embedding || [];
+    const ms = Math.round(performance.now() - t0);
+    status.textContent = `done · ${vec.length}-dim · ${ms} ms · model=${obj.model || model}`;
+    // Show the first 12 components + ellipsis to keep the UI tight.
+    const preview = vec.slice(0, 12).map((x) => x.toFixed(4)).join(", ");
+    pre.textContent = `[${preview}${vec.length > 12 ? `, … ${vec.length - 12} more` : ""}]`;
+  } catch (e) {
+    status.textContent = "error";
+    pre.textContent = e.message;
   }
 }
 
@@ -406,7 +501,20 @@ async function pgSend() {
 
   const messages = [];
   if (system) messages.push({ role: "system", content: system });
-  messages.push({ role: "user", content: user });
+  if (pgImageDataURL) {
+    // OpenAI multimodal content-array shape. Flock translates this for
+    // the Ollama backend; vision-capable models (gemma4-*, llama-4-scout,
+    // qwen3-vl-*, step-3.7-flash) receive the image bytes.
+    messages.push({
+      role: "user",
+      content: [
+        { type: "text", text: user },
+        { type: "image_url", image_url: { url: pgImageDataURL } },
+      ],
+    });
+  } else {
+    messages.push({ role: "user", content: user });
+  }
 
   const t0 = performance.now();
   try {
@@ -472,6 +580,7 @@ function pgClear() {
   $("#pgSystem").value = "";
   $("#pgResponseBox").classList.add("hidden");
   $("#pgResponsePre").textContent = "";
+  pgImageClear();
 }
 
 async function renderNodes() {
