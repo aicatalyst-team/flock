@@ -32,6 +32,8 @@ var clients = []Client{
 	{ID: "hermes", Protocol: "Anthropic", Description: "Nous Research's CLI agent (persistent memory + auto skills)"},
 	{ID: "openclaw", Protocol: "OpenAI", Description: "Open-source CLI coding agent (OpenAI-compatible)"},
 	{ID: "opencode", Protocol: "Both", Description: "Open-source terminal coding agent (per-provider baseURL override)"},
+	{ID: "open-webui", Protocol: "OpenAI", Description: "Self-hosted ChatGPT-style web UI (~85k★ on GitHub)"},
+	{ID: "goose", Protocol: "OpenAI", Description: "Block's OSS terminal agent (Apache-2.0, OpenAI-compatible)"},
 	{ID: "openai-sdk", Protocol: "OpenAI", Description: "OpenAI Python/JS SDK"},
 	{ID: "anthropic-sdk", Protocol: "Anthropic", Description: "Anthropic Python/JS SDK"},
 	{ID: "curl", Protocol: "Raw HTTP", Description: "Direct HTTP calls for testing"},

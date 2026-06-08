@@ -135,6 +135,48 @@ export ANTHROPIC_API_KEY=sk-ant-...   # vendor
 # or just rerun ` + "`hermes`" + ` and pick a provider in the first prompt.
 `,
 
+	"open-webui": `# Open WebUI's Flock override lives inside the container (env vars at
+# launch + UI settings). Reverse it:
+#
+#   1. If you launched it with the Docker command from ` + "`flock connect open-webui`" + `,
+#      stop the container:
+#        docker rm -f open-webui
+#      Then re-launch without the OPENAI_API_BASE_URL / _API_KEY env vars
+#      (or with the vendor URL / your own key):
+#        docker run -d -p 3000:8080 \
+#          -e OPENAI_API_BASE_URL=https://api.openai.com/v1 \
+#          -e OPENAI_API_KEY=sk-... \
+#          -v open-webui:/app/backend/data \
+#          --name open-webui --restart always \
+#          ghcr.io/open-webui/open-webui:main
+#
+#   2. If you set Flock in the UI instead: Settings → Admin Panel →
+#      Connections → OpenAI API → clear the API URL + API Key fields
+#      (or replace with your own provider).
+#
+# Open WebUI keeps user chats in the open-webui Docker volume regardless
+# of which backend is configured.
+`,
+
+	"goose": `# Goose reads its provider from ~/.config/goose/config.yaml.
+# Reverse the Flock override:
+#
+#   # before
+#   GOOSE_PROVIDER: openai
+#   GOOSE_MODEL: qwen-coder-14b
+#   OPENAI_BASE_URL: http://your-flock-host:8080/v1
+#   OPENAI_API_KEY: sk-orc-...
+#
+#   # after — delete the OPENAI_BASE_URL line so Goose talks to
+#   # api.openai.com, and replace the OPENAI_API_KEY with your own:
+#   GOOSE_PROVIDER: openai
+#   GOOSE_MODEL: gpt-4o
+#   OPENAI_API_KEY: sk-...
+
+# Or re-run the interactive configurator:
+goose configure
+`,
+
 	"opencode": `# OpenCode reads its endpoint from opencode.json (project root or
 # ~/.config/opencode/opencode.json). Reverse the Flock override by
 # deleting the per-provider "options.baseURL" + "options.apiKey" keys
