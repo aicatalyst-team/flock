@@ -12,15 +12,8 @@ import (
 	"net/http"
 	"strings"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
-
-// ollamaTracer is package-scoped so engine spans share the same
-// instrumentation-library name across driver methods.
-var ollamaTracer trace.Tracer = otel.Tracer("github.com/hadihonarvar/flock/internal/engines/ollama")
 
 // Ollama is an Engine that talks to an Ollama HTTP server.
 type Ollama struct {
@@ -206,14 +199,7 @@ func (o *Ollama) Delete(ctx context.Context, modelID string) error {
 // Chat runs a chat completion. Events are emitted on the returned channel
 // until Done or an error.
 func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
-	ctx, span := ollamaTracer.Start(ctx, "ollama.Chat",
-		trace.WithAttributes(
-			attribute.String("flock.engine", "ollama"),
-			attribute.String("flock.model", req.Model),
-			attribute.String("flock.engine.endpoint", o.endpoint),
-			attribute.Int("flock.messages", len(req.Messages)),
-		),
-	)
+	ctx, span := startChatSpan(ctx, "ollama", req.Model, o.endpoint, len(req.Messages))
 	// span.End() is deferred in the streaming goroutine so its duration
 	// covers the whole streamed response. Synchronous errors close it
 	// inline below.
@@ -224,8 +210,7 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint+"/api/chat", bytes.NewReader(raw))
 	if err != nil {
-		span.SetStatus(codes.Error, "new request")
-		span.RecordError(err)
+		span.markError("new request", err)
 		span.End()
 		close(out)
 		return nil, err
@@ -234,8 +219,7 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 
 	resp, err := o.client.Do(httpReq)
 	if err != nil {
-		span.SetStatus(codes.Error, "http do")
-		span.RecordError(err)
+		span.markError("http do", err)
 		span.End()
 		close(out)
 		return nil, fmt.Errorf("ollama chat: %w", err)
@@ -243,25 +227,20 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		span.SetStatus(codes.Error, resp.Status)
-		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+		span.SetHTTPStatus(resp.StatusCode)
+		span.markError(resp.Status, nil)
 		span.End()
 		close(out)
 		return nil, fmt.Errorf("ollama chat: %s: %s", resp.Status, string(b))
 	}
-	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	span.SetHTTPStatus(resp.StatusCode)
 
 	go func() {
 		defer close(out)
 		defer resp.Body.Close()
 		defer span.End() // closes once the stream is drained or ctx cancels
 		var promptTokens, completionTokens int
-		defer func() {
-			span.SetAttributes(
-				attribute.Int("flock.tokens.prompt", promptTokens),
-				attribute.Int("flock.tokens.completion", completionTokens),
-			)
-		}()
+		defer func() { span.SetTokens(promptTokens, completionTokens) }()
 		send := func(ev StreamEvent) bool {
 			select {
 			case out <- ev:

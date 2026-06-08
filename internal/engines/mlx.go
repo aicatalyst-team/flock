@@ -83,12 +83,16 @@ func (m *MLX) Delete(ctx context.Context, modelID string) error { return nil }
 
 // Chat proxies an OpenAI chat completion to mlx_lm.server.
 func (m *MLX) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	ctx, span := startChatSpan(ctx, "mlx", req.Model, m.endpoint, len(req.Messages))
+
 	out := make(chan StreamEvent, 16)
 	body := buildOpenAIChatBody(req)
 	raw, _ := json.Marshal(body)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint+"/v1/chat/completions", bytes.NewReader(raw))
 	if err != nil {
+		span.markError("new request", err)
+		span.End()
 		close(out)
 		return nil, err
 	}
@@ -96,17 +100,23 @@ func (m *MLX) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, er
 
 	resp, err := m.client.Do(httpReq)
 	if err != nil {
+		span.markError("http do", err)
+		span.End()
 		close(out)
 		return nil, fmt.Errorf("mlx chat: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		span.SetHTTPStatus(resp.StatusCode)
+		span.markError(resp.Status, nil)
+		span.End()
 		close(out)
 		return nil, fmt.Errorf("mlx chat: %s: %s", resp.Status, string(b))
 	}
+	span.SetHTTPStatus(resp.StatusCode)
 
-	go consumeOpenAIStream(ctx, resp.Body, out)
+	go consumeOpenAIStreamWithSpan(ctx, resp.Body, out, span)
 	return out, nil
 }
 

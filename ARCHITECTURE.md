@@ -759,7 +759,7 @@ Per-span attributes:
 - `router.Chat.attempt` / `router.Embed.attempt`: `flock.attempt`, `flock.model.candidate`, `flock.is_fallback`, `flock.engine`, `flock.node_id`
 - `ollama.Chat`: `flock.engine`, `flock.model`, `flock.engine.endpoint`, `flock.messages`, `http.status_code`, `flock.tokens.prompt`, `flock.tokens.completion`
 
-vLLM / MLX / llamacpp drivers follow the same pattern in v0.7. W3C `traceparent` propagation is always on (even when export is disabled), so Flock participates correctly when sandwiched between two services that both export upstream.
+vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via a shared `startChatSpan()` helper in `internal/engines/tracing.go`. W3C `traceparent` propagation is always on (even when export is disabled), so Flock participates correctly when sandwiched between two services that both export upstream.
 
 ### Logs
 

@@ -104,12 +104,18 @@ func (v *VLLM) Delete(ctx context.Context, modelID string) error {
 // Chat proxies an OpenAI chat completion to vLLM and adapts the streamed
 // SSE response back into Flock's StreamEvent channel.
 func (v *VLLM) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	ctx, span := startChatSpan(ctx, "vllm", req.Model, v.endpoint, len(req.Messages))
+	// span.End() runs in consumeOpenAIStreamWithSpan so duration covers
+	// the full streamed response, not just stream-start.
+
 	out := make(chan StreamEvent, 16)
 	body := buildOpenAIChatBody(req)
 	raw, _ := json.Marshal(body)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, v.endpoint+"/v1/chat/completions", bytes.NewReader(raw))
 	if err != nil {
+		span.markError("new request", err)
+		span.End()
 		close(out)
 		return nil, err
 	}
@@ -118,17 +124,23 @@ func (v *VLLM) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, e
 
 	resp, err := v.client.Do(httpReq)
 	if err != nil {
+		span.markError("http do", err)
+		span.End()
 		close(out)
 		return nil, fmt.Errorf("vllm chat: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		span.SetHTTPStatus(resp.StatusCode)
+		span.markError(resp.Status, nil)
+		span.End()
 		close(out)
 		return nil, fmt.Errorf("vllm chat: %s: %s", resp.Status, string(b))
 	}
+	span.SetHTTPStatus(resp.StatusCode)
 
-	go consumeOpenAIStream(ctx, resp.Body, out)
+	go consumeOpenAIStreamWithSpan(ctx, resp.Body, out, span)
 	return out, nil
 }
 
@@ -271,3 +283,34 @@ func consumeOpenAIStream(ctx context.Context, body io.ReadCloser, out chan<- Str
 }
 
 var _ Engine = (*VLLM)(nil)
+
+// consumeOpenAIStreamWithSpan wraps consumeOpenAIStream and additionally
+// records the per-request token counts + closes the span once the stream
+// is drained or the context cancels. Spans are no-op when the global
+// TracerProvider isn't set (FLOCK_OTLP_ENDPOINT unset), so this path
+// has zero overhead in the default config.
+func consumeOpenAIStreamWithSpan(ctx context.Context, body io.ReadCloser, out chan<- StreamEvent, span *chatSpan) {
+	defer span.End()
+	intermediate := make(chan StreamEvent, 16)
+	go consumeOpenAIStream(ctx, body, intermediate)
+	var promptTokens, completionTokens int
+	for ev := range intermediate {
+		if ev.Done && ev.Usage != nil {
+			promptTokens = ev.Usage.PromptTokens
+			completionTokens = ev.Usage.CompletionTokens
+		}
+		select {
+		case out <- ev:
+		case <-ctx.Done():
+			// drain so the upstream producer doesn't block
+			go func() {
+				for range intermediate {
+				}
+			}()
+			span.SetTokens(promptTokens, completionTokens)
+			return
+		}
+	}
+	span.SetTokens(promptTokens, completionTokens)
+	close(out)
+}
