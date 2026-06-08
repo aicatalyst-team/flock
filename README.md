@@ -94,7 +94,24 @@ brew install --cask ollama && open -a Ollama
 FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
 ```
 
-### 🐧 Linux (x86_64 or arm64)
+### 🐧 Linux (x86_64 or arm64) — including Raspberry Pi, NAS, edge boxes
+
+**Option A — `.deb` / `.rpm` package** (recommended for Debian / Ubuntu / Raspbian / QNAP / Asustor / Fedora / RHEL):
+
+```bash
+# Debian / Ubuntu / Raspbian (arm64 example — also amd64)
+curl -LO https://github.com/hadihonarvar/flock/releases/latest/download/flock_VERSION_linux_arm64.deb
+sudo dpkg -i flock_VERSION_linux_arm64.deb
+# Binary at /usr/bin/flock, catalog at /usr/share/flock/catalog
+# Recommends llama.cpp for sharding — install via apt if you want it.
+
+# Fedora / RHEL / CentOS
+sudo rpm -i https://github.com/hadihonarvar/flock/releases/latest/download/flock_VERSION_linux_amd64.rpm
+```
+
+(Replace `VERSION` with the latest from [Releases](https://github.com/hadihonarvar/flock/releases). The package version stays current via your distro's normal upgrade path — `flock update` also works as an in-place binary swap for non-package installs.)
+
+**Option B — install.sh** (works everywhere; drops binary in `~/.local/bin/`):
 
 ```bash
 # 1. install Flock

@@ -33,6 +33,57 @@ archives:
       - SECURITY.md
       - catalog/*
 
+# .deb + .rpm packages for edge / NAS deployments. Raspberry Pi OS,
+# Debian, Ubuntu, and most Linux-based NAS (QNAP, Asustor) accept .deb;
+# Fedora / CentOS / RHEL accept .rpm. Synology .spk packaging requires
+# a different toolchain (Synology's `pkgcreate` against a DSM SDK) and
+# lands as a v0.7 follow-up.
+#
+# Install path: /usr/bin/flock (so it's on PATH out of the box).
+# Catalog ships under /usr/share/flock/catalog/ — the binary's
+# resolveCatalogDir() already picks it up via the
+# /usr/local/share/flock/catalog fallback path, which most distros
+# also probe; we go one step further by placing it where APT controls.
+nfpms:
+  - id: linux-pkgs
+    package_name: flock
+    file_name_template: 'flock_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    vendor: Hadi Honarvar Nazari
+    homepage: https://github.com/hadihonarvar/flock
+    maintainer: Hadi Honarvar Nazari <hadi.work.ca@gmail.com>
+    description: |
+      Self-hosted control plane for LLMs — one URL + one key for your
+      team's models. Single Go binary; supports Ollama, vLLM, MLX-LM
+      and llama.cpp drivers; multi-machine routing + sharding via
+      llama.cpp RPC.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    contents:
+      - src: catalog/
+        dst: /usr/share/flock/catalog
+      - src: LICENSE
+        dst: /usr/share/doc/flock/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/flock/README.md
+      - src: QUICKSTART.md
+        dst: /usr/share/doc/flock/QUICKSTART.md
+      - src: scripts/two-node-smoke.sh
+        dst: /usr/share/flock/scripts/two-node-smoke.sh
+        file_info:
+          mode: 0755
+    overrides:
+      deb:
+        recommends:
+          - llama.cpp     # sharded models need rpc-server + llama-server
+      rpm:
+        recommends:
+          - llama-cpp
+
 checksum:
   name_template: 'checksums.txt'
 
