@@ -11,3 +11,5 @@ recommended_engines: [ollama, vllm, llamacpp]
 hardware:
   min_ram_gb: 16
 tags: [reasoning, thinking, small, openai]
+license: apache-2.0
+license_url: https://huggingface.co/openai/gpt-oss-20b/blob/main/LICENSE

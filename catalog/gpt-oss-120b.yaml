@@ -12,3 +12,5 @@ hardware:
   min_ram_gb: 80
   min_vram_gb: 80
 tags: [reasoning, thinking, large, openai]
+license: apache-2.0
+license_url: https://huggingface.co/openai/gpt-oss-120b/blob/main/LICENSE

@@ -18,3 +18,5 @@ recommended_engines: [llamacpp, mlx, vllm]
 hardware:
   min_ram_gb: 8
 tags: [moe, edge, reasoning, thinking, on-device, liquid-ai]
+license: lfm-open
+license_url: https://huggingface.co/LiquidAI/LFM2.5-8B-A1B/blob/main/LICENSE

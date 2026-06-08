@@ -15,3 +15,5 @@ hardware:
   min_ram_gb: 80
   min_vram_gb: 80
 tags: [moe, multimodal, long-context, meta]
+license: llama-4-community
+license_url: https://www.llama.com/llama4/license/

@@ -11,3 +11,5 @@ recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:
   min_ram_gb: 24
 tags: [general, moe, fast]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen3-30B/blob/main/LICENSE

@@ -17,3 +17,5 @@ recommended_engines: [ollama, vllm, llamacpp]
 hardware:
   min_ram_gb: 2
 tags: [embedding, retrieval, nomic, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/main/LICENSE

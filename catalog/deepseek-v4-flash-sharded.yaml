@@ -26,6 +26,8 @@ recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 160
 tags: [moe, sharded, frontier, agentic]
+license: mit
+license_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/LICENSE
 sharding:
   required: true
   default_shards: 2

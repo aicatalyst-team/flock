@@ -24,6 +24,8 @@ recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 512
 tags: [moe, sharded, frontier, coding, agentic]
+license: mit
+license_url: https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/LICENSE
 sharding:
   required: true
   default_shards: 4

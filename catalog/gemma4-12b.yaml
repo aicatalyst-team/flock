@@ -11,3 +11,5 @@ recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:
   min_ram_gb: 12
 tags: [general, multilingual, google, multimodal, audio, video]
+license: gemma
+license_url: https://ai.google.dev/gemma/terms

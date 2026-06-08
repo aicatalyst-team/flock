@@ -26,6 +26,8 @@ recommended_engines: [llamacpp, vllm]
 hardware:
   min_ram_gb: 128
 tags: [moe, sharded, frontier, agentic, multimodal, vlm]
+license: apache-2.0
+license_url: https://huggingface.co/stepfun-ai/Step-3.7-Flash/blob/main/LICENSE
 sharding:
   required: true
   default_shards: 2

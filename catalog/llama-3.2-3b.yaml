@@ -14,3 +14,5 @@ recommended_engines: [ollama, llamacpp]
 hardware:
   min_ram_gb: 4
 tags: [small, fast]
+license: llama-3-community
+license_url: https://www.llama.com/llama3_2/license/

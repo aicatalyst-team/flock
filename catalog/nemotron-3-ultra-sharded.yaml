@@ -29,6 +29,8 @@ recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 320
 tags: [moe, mamba, sharded, frontier, nvidia, long-context]
+license: nvidia-open
+license_url: https://huggingface.co/nvidia/Nemotron-3-Ultra/blob/main/LICENSE
 sharding:
   required: true
   default_shards: 4

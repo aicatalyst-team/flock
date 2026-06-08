@@ -11,3 +11,5 @@ recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:
   min_ram_gb: 32
 tags: [coding, agent]
+license: apache-2.0
+license_url: https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct/blob/main/LICENSE

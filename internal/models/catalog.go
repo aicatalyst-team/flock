@@ -25,6 +25,16 @@ type Entry struct {
 	Hardware           HardwareSpec `yaml:"hardware"`
 	Tags               []string     `yaml:"tags"`
 	Sharding           ShardingSpec `yaml:"sharding,omitempty"`
+
+	// License is a short identifier (SPDX where possible) of the model's
+	// release license. Examples: "apache-2.0", "mit", "llama-3-community",
+	// "llama-4-community", "gemma", "minisign-restricted". Surfaced in
+	// `flock model info` so commercial users see it before install.
+	License string `yaml:"license,omitempty"`
+	// LicenseURL points at the canonical license text — usually the
+	// model's HuggingFace LICENSE file.
+	LicenseURL string `yaml:"license_url,omitempty"`
+
 	// Fallback is an ordered list of catalog IDs to try when the primary
 	// model can't serve a request (engine down, model not loaded, 503,
 	// timeout, etc.). Tried in order; the first that succeeds wins.

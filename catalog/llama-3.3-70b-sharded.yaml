@@ -24,6 +24,8 @@ recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 48      # combined across shards
 tags: [sharded, large]
+license: llama-3-community
+license_url: https://www.llama.com/llama3_3/license/
 sharding:
   required: true
   default_shards: 2

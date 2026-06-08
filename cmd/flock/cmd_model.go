@@ -368,6 +368,13 @@ func modelInfo(id string) {
 		fmt.Printf("  %sSharding%s       required (default %d shards, %s engine)\n",
 			bold, reset, entry.Sharding.DefaultShards, entry.Sharding.Engine)
 	}
+	if entry.License != "" {
+		licenseLine := entry.License
+		if entry.LicenseURL != "" {
+			licenseLine += " · " + dim + entry.LicenseURL + reset
+		}
+		fmt.Printf("  %sLicense%s        %s\n", bold, reset, licenseLine)
+	}
 	if len(entry.Fallback) > 0 {
 		fmt.Printf("  %sFallback%s       %s\n",
 			bold, reset, strings.Join(entry.Fallback, " → "))

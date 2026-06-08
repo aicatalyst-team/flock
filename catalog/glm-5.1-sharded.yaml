@@ -23,6 +23,8 @@ recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 416
 tags: [moe, sharded, frontier, coding, agentic]
+license: mit
+license_url: https://huggingface.co/THUDM/GLM-5.1/blob/main/LICENSE
 sharding:
   required: true
   default_shards: 4
