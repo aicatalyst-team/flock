@@ -465,7 +465,9 @@ Flock ships a curated catalog of **37 open-weight models** in `catalog/*.yaml`, 
 
 Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `flock model ls`, `flock status`, `flock usage`, and `flock audit` also accept `--json`. Running any `flock model add|info|remove` or `flock connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate). Output is colored when stdout is a TTY; set `NO_COLOR=1` (or `FLOCK_NO_COLOR=1`) to disable.
 
-The dashboard at `http://localhost:8080` mirrors the CLI: persistent top-bar chips show role + engine reachability + node/model counts (polled every 5 s); the Models tab includes a filterable catalog browser with per-row install; Nodes / Models / Usage / Audit refresh live while their tab is active; and "Add a worker" generates a one-time join token with copy-pasteable install-and-join snippets.
+The dashboard at `http://localhost:8080` mirrors the CLI: persistent top-bar chips show role + engine reachability + node/model counts (polled every 5 s); the Home tab summarizes traffic (requests-per-minute sparkline, p50/p95/p99, error rate, top model, recent activity); the Models tab includes a filterable catalog browser with per-row install; Nodes / Models / Usage / Audit refresh live while their tab is active; and "Add a worker" generates a one-time join token with copy-pasteable install-and-join snippets.
+
+The same aggregates are available from the CLI: `flock usage --summary` and `flock audit --summary` print the top-models / p50-p95-p99 / error-rate / sparkline view that the dashboard renders. Both also accept `--json`.
 
 ### Proxied (paid APIs — shipped, works today)
 

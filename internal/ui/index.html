@@ -233,32 +233,106 @@ const card = (title, value, sub = "") =>
    </div>`;
 
 async function renderDashboard() {
+  startPolling(5000, renderDashboard);
   const root = $("#view-dashboard");
-  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  if (!root.dataset.loaded) {
+    root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  }
   try {
-    const [nodes, models, usage] = await Promise.all([
+    const [nodes, models, summary, recent] = await Promise.all([
       api("/admin/v1/nodes"),
       api("/admin/v1/models"),
+      api("/admin/v1/usage/summary"),
       api("/admin/v1/usage/recent"),
     ]);
-    const tokens = (usage || []).reduce((s, u) => s + (u.PromptTokens || 0) + (u.CompletionTokens || 0), 0);
+    root.dataset.loaded = "1";
+    const errPct = (summary.error_rate * 100).toFixed(1);
+    const errClass = summary.error_rate > 0.05 ? "text-red-600" : summary.error_rate > 0 ? "text-amber-600" : "text-emerald-600";
+    const topModel = (summary.top_models || [])[0];
+    const sparkSVG = sparklineSVG(summary.rpm_60min || []);
+    const recentList = (recent || []).slice(0, 6).map((u) => {
+      const outcomeBadge = (u.Outcome === "ok" || u.Outcome === "success") ?
+        `<span class="pill pill-ok">ok</span>` :
+        `<span class="pill pill-err">${u.Outcome || "?"}</span>`;
+      return `<div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
+        <span class="font-mono text-slate-500">${new Date(u.TS).toLocaleTimeString()}</span>
+        <span class="font-mono">${u.Model}</span>
+        <span class="text-slate-500">${u.LatencyMS} ms</span>
+        ${outcomeBadge}
+      </div>`;
+    }).join("");
+
     root.innerHTML = `
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         ${card("Nodes", (nodes || []).length)}
         ${card("Models", (models || []).length)}
-        ${card("Recent requests", (usage || []).length, "last 200")}
-        ${card("Tokens served", tokens.toLocaleString(), "last 200 requests")}
+        ${card("Requests", summary.total || 0, "last 1000")}
+        ${card("Tokens served", (summary.tokens_total || 0).toLocaleString(), "last 1000 requests")}
       </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-xs text-slate-500 uppercase tracking-wide">Latency</div>
+          <div class="mt-2 grid grid-cols-3 gap-2 text-sm">
+            <div><div class="text-slate-500 text-xs">p50</div><div class="font-mono">${summary.p50_ms || 0} ms</div></div>
+            <div><div class="text-slate-500 text-xs">p95</div><div class="font-mono">${summary.p95_ms || 0} ms</div></div>
+            <div><div class="text-slate-500 text-xs">p99</div><div class="font-mono">${summary.p99_ms || 0} ms</div></div>
+          </div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-xs text-slate-500 uppercase tracking-wide">Error rate</div>
+          <div class="text-2xl font-semibold mt-1 ${errClass}">${errPct}%</div>
+          <div class="text-xs text-slate-500 mt-1">over last 1000 requests</div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-xs text-slate-500 uppercase tracking-wide">Top model</div>
+          ${topModel ? `<div class="text-base font-semibold mt-1 font-mono truncate">${topModel.model}</div>
+            <div class="text-xs text-slate-500 mt-1">${topModel.count} requests</div>` :
+            `<div class="text-sm text-slate-400 mt-1">no requests yet</div>`}
+        </div>
+      </div>
+
       <div class="bg-white border border-slate-200 rounded p-4">
-        <div class="text-sm font-semibold mb-2">Quick start</div>
-        <pre class="text-xs bg-slate-900 text-slate-100 p-3 rounded overflow-auto">curl ${location.origin}/v1/chat/completions \\
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold">Requests per minute · last 60 min</div>
+          <div class="text-xs text-slate-500">peaks scale to fill</div>
+        </div>
+        ${sparkSVG}
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-sm font-semibold mb-2">Recent activity</div>
+          ${recentList || `<div class="text-xs text-slate-400">no requests yet</div>`}
+        </div>
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-sm font-semibold mb-2">Quick start</div>
+          <pre class="text-xs bg-slate-900 text-slate-100 p-3 rounded overflow-auto">curl ${location.origin}/v1/chat/completions \\
   -H 'Authorization: Bearer ${API_KEY}' \\
   -H 'Content-Type: application/json' \\
   -d '{"model":"auto","messages":[{"role":"user","content":"hello"}]}'</pre>
+        </div>
       </div>`;
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
+}
+
+// sparklineSVG renders a series as a full-width SVG bar chart. Bars
+// scale to the local peak so an idle Flock still shows shape rather
+// than a flat line at 1px.
+function sparklineSVG(vals) {
+  if (!vals.length) return `<div class="text-xs text-slate-400">no data</div>`;
+  const max = Math.max(1, ...vals);
+  const w = 600, h = 60, gap = 1;
+  const barW = (w - gap * (vals.length - 1)) / vals.length;
+  const bars = vals.map((v, i) => {
+    const bh = (v / max) * h;
+    const x = i * (barW + gap);
+    const y = h - bh;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(2)}" height="${bh.toFixed(1)}" fill="#10b981" />`;
+  }).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-16">${bars}</svg>`;
 }
 
 // =========== Connect tab (M3-T23 + M3-T24) ===========

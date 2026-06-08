@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/api"
@@ -229,7 +231,9 @@ func (s *Server) routes() http.Handler {
 
 			// Observability
 			r.Get("/usage/recent", s.listUsageRecent)
+			r.Get("/usage/summary", s.usageSummary)
 			r.Get("/audit/recent", s.listAuditRecent)
+			r.Get("/audit/summary", s.auditSummary)
 
 			// Shards
 			r.Get("/shards", s.listShards)
@@ -910,6 +914,145 @@ func (s *Server) listAuditRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, es)
+}
+
+// usageSummary computes aggregate stats from the last 1000 usage rows:
+// total requests, top models, p50/p95/p99 latency, error rate, and a
+// 60-minute requests-per-minute series suitable for a sparkline. All
+// computed in-memory; the table is small enough that this stays cheap.
+func (s *Server) usageSummary(w http.ResponseWriter, r *http.Request) {
+	us, err := s.store.Usage().Recent(r.Context(), 1000)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type modelStat struct {
+		Model string `json:"model"`
+		Count int    `json:"count"`
+	}
+	out := struct {
+		Total       int         `json:"total"`
+		TokensTotal int64       `json:"tokens_total"`
+		ErrorRate   float64     `json:"error_rate"`
+		P50MS       int         `json:"p50_ms"`
+		P95MS       int         `json:"p95_ms"`
+		P99MS       int         `json:"p99_ms"`
+		TopModels   []modelStat `json:"top_models"`
+		RPM60Min    []int       `json:"rpm_60min"`
+		SinceTS     *time.Time  `json:"since_ts,omitempty"`
+		UntilTS     *time.Time  `json:"until_ts,omitempty"`
+	}{
+		Total:     len(us),
+		TopModels: []modelStat{},
+		RPM60Min:  make([]int, 60),
+	}
+	if len(us) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	latencies := make([]int, 0, len(us))
+	modelCounts := map[string]int{}
+	var errCount int
+	now := time.Now()
+	for _, u := range us {
+		out.TokensTotal += int64(u.PromptTokens) + int64(u.CompletionTokens)
+		modelCounts[u.Model]++
+		latencies = append(latencies, u.LatencyMS)
+		switch strings.ToLower(u.Outcome) {
+		case "error", "failed", "timeout", "cancelled":
+			errCount++
+		}
+		if ago := now.Sub(u.TS); ago >= 0 && ago < 60*time.Minute {
+			bucket := 59 - int(ago.Minutes())
+			if bucket >= 0 && bucket < 60 {
+				out.RPM60Min[bucket]++
+			}
+		}
+	}
+	sort.Ints(latencies)
+	pct := func(p float64) int {
+		idx := int(float64(len(latencies)) * p / 100.0)
+		if idx >= len(latencies) {
+			idx = len(latencies) - 1
+		}
+		return latencies[idx]
+	}
+	out.P50MS = pct(50)
+	out.P95MS = pct(95)
+	out.P99MS = pct(99)
+	out.ErrorRate = float64(errCount) / float64(len(us))
+
+	for m, c := range modelCounts {
+		out.TopModels = append(out.TopModels, modelStat{Model: m, Count: c})
+	}
+	sort.Slice(out.TopModels, func(i, j int) bool { return out.TopModels[i].Count > out.TopModels[j].Count })
+	if len(out.TopModels) > 5 {
+		out.TopModels = out.TopModels[:5]
+	}
+
+	// Usage rows come back newest-first; until = first row, since = last.
+	since := us[len(us)-1].TS
+	until := us[0].TS
+	out.SinceTS = &since
+	out.UntilTS = &until
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// auditSummary aggregates the last 1000 audit entries into a compact
+// "who's doing what" view: top actors, top actions, total entries.
+func (s *Server) auditSummary(w http.ResponseWriter, r *http.Request) {
+	es, err := s.store.Audit().Recent(r.Context(), 1000)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type countStat struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	out := struct {
+		Total      int         `json:"total"`
+		TopActors  []countStat `json:"top_actors"`
+		TopActions []countStat `json:"top_actions"`
+		SinceTS    *time.Time  `json:"since_ts,omitempty"`
+		UntilTS    *time.Time  `json:"until_ts,omitempty"`
+	}{
+		Total:      len(es),
+		TopActors:  []countStat{},
+		TopActions: []countStat{},
+	}
+	if len(es) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	actorCounts := map[string]int{}
+	actionCounts := map[string]int{}
+	for _, e := range es {
+		actorCounts[e.Actor]++
+		actionCounts[e.Action]++
+	}
+	for k, v := range actorCounts {
+		out.TopActors = append(out.TopActors, countStat{Name: k, Count: v})
+	}
+	sort.Slice(out.TopActors, func(i, j int) bool { return out.TopActors[i].Count > out.TopActors[j].Count })
+	if len(out.TopActors) > 5 {
+		out.TopActors = out.TopActors[:5]
+	}
+	for k, v := range actionCounts {
+		out.TopActions = append(out.TopActions, countStat{Name: k, Count: v})
+	}
+	sort.Slice(out.TopActions, func(i, j int) bool { return out.TopActions[i].Count > out.TopActions[j].Count })
+	if len(out.TopActions) > 5 {
+		out.TopActions = out.TopActions[:5]
+	}
+	since := es[len(es)-1].TS
+	until := es[0].TS
+	out.SinceTS = &since
+	out.UntilTS = &until
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) accessLog(next http.Handler) http.Handler {
