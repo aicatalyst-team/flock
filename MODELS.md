@@ -17,7 +17,7 @@ Every model in Flock's catalog, with step-by-step install + use instructions for
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **27 models** as of v0.4.0 (run `flock model search` for the live list).
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **27 models** as of v0.5.0 (run `flock model search` for the live list).
 
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |

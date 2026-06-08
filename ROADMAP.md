@@ -1,6 +1,6 @@
 # Roadmap — multimodal + accessibility (v0.4 → v1.0)
 
-Last updated: 2026-06-07 · Current release: **v0.4.0** · See [TASKS.md](TASKS.md) for the per-task tracker.
+Last updated: 2026-06-07 · Current release: **v0.5.0** · See [TASKS.md](TASKS.md) for the per-task tracker.
 
 This file is the strategic plan. It groups everything into three buckets — **modalities that fit Flock's architecture**, **modalities that stretch it**, and the **eight accessibility bets** that turn open-source AI from "I can run a model" into "my team uses this in production."
 
@@ -110,12 +110,14 @@ The only **breaking changes** are (2) router rewrite and (5) package layout — 
 
 ```
 v0.4.0 (done)  → Vision (Ollama path)
-v0.5.0 (done)  → Embeddings (Ollama path)
+v0.5.0 (done)  → Embeddings · catalog fallback chain · HMAC mutual auth · GGUF distribution
+                 · coordinator-on-worker · OTLP traces (HTTP layer) · Grafana dashboards
+                 · Bedrock + Vertex routing detection · 15-client `flock connect` roster
+v0.6           → Bedrock + Vertex actual signing · OTLP child spans (router + engines)
+                 · Rerank · Anthropic extended thinking + computer use
 v0.7           → Latency-aware fallback (bet 1) · Edge runtime / NAS packages (bet 3)
-                 · Bedrock + Vertex egress (P1) · OpenTelemetry traces (P2)
-                 · Reference Grafana dashboards (P3)
-v0.8           → Hardware abstraction (bet 2) · Signed catalogs (bet 4) · Image generation · Rerank
-v0.9           → ASR · TTS
+v0.8           → Hardware abstraction (bet 2) · Signed catalogs (bet 4) · Image generation
+v0.9           → ASR · TTS · LoRA hot-loading
 v1.0           → Embeddable Go library (bet 5) · API stability commitment
 ```
 

@@ -2,7 +2,7 @@
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
 
-> **Doc-vs-code currency:** this document describes v0.4 (cross-node routing + sharding auto-orchestration + CLI/UI parity). The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
+> **Doc-vs-code currency:** this document describes v0.5 (cross-node routing + sharding auto-orchestration + CLI/UI parity + HMAC mutual auth + GGUF distribution + OTLP traces + 15 connect clients). The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
 ---
 
