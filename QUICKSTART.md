@@ -567,6 +567,23 @@ Flock v0.4 assumes a **trusted network** (LAN or [Tailscale](https://tailscale.c
 
 If you're not on a trusted LAN, still run the cluster **behind Tailscale** or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer fallback exists for one transition release; set `FLOCK_REJECT_BEARER=1` once every leader and worker is on v0.5+.
 
+### 🌐 Network behavior — every call Flock can make
+
+Flock prints this same list at startup as the "Network behavior on this node" banner. **Telemetry is off — Flock never reports installs, usage, errors, or any data to flockllm.com or any analytics endpoint.** The only calls below the gateway makes are operator-configured.
+
+| Direction | When | Disable |
+|---|---|---|
+| → `github.com/hadihonarvar/flock/releases/latest` | At `flock up`, max 1× per 24h. Anonymous; no Flock-specific identifier sent. Cached at `~/.flock/update-check.json`. | `FLOCK_NO_UPDATE_CHECK=1` |
+| → engine endpoint (`ollama` / `vllm` / `mlx` / `llamacpp`) | Every inference request. Engine is operator-selected via `engine.preferred`. | Don't pick that engine. |
+| → `api.anthropic.com` | On `claude-*` requests if `ANTHROPIC_API_KEY` is set. | Unset the key. |
+| → `api.openai.com` | On `gpt-*`/`o-*` requests if `OPENAI_API_KEY` is set. | Unset the key. |
+| → `bedrock-runtime.<region>.amazonaws.com` | On `anthropic.*` requests if `FLOCK_BEDROCK_REGION` is set. Uses AWS credentials chain. | Unset `FLOCK_BEDROCK_REGION`. |
+| → `<location>-aiplatform.googleapis.com` | On `gemini-*` requests if `FLOCK_VERTEX_PROJECT` is set. Uses ADC. | Unset `FLOCK_VERTEX_PROJECT`. |
+| → OTLP collector | If `FLOCK_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector, not upstream. | Unset `FLOCK_OTLP_ENDPOINT`. |
+| → HuggingFace / Ollama registry | At `flock model add` when pulling weights for a catalog entry. Operator-invoked. | Don't run `flock model add`. |
+
+Set `FLOCK_NO_UPDATE_CHECK=1` if you want **zero** outbound calls from `flock up` itself (assuming no API keys / OTLP / Bedrock / Vertex are configured). The gateway only talks to engines you've chosen and vendors you've keyed.
+
 ---
 
 ## 📖 Every command has --help

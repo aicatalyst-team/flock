@@ -310,9 +310,56 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    flock connect --list        # see all supported clients")
 	}
 	MaybeShowUpdateNotice(os.Stdout)
+	printNetworkPosture(cfg)
 	fmt.Println()
 	fmt.Println("  Press Ctrl-C to stop.")
 	fmt.Println()
+}
+
+// printNetworkPosture lists every outbound network call Flock can make
+// from this process. Designed so an operator running `flock up` can audit
+// the privacy posture at a glance — no surprises, no silent calls. Reads
+// the live config so it reflects what *this* invocation will actually do.
+func printNetworkPosture(cfg *config.Config) {
+	fmt.Println()
+	fmt.Println("  Network behavior on this node:")
+
+	// Tracing
+	if cfg.Observability.OTLPEndpoint == "" {
+		fmt.Println("    · Tracing:       OFF  (set FLOCK_OTLP_ENDPOINT=… to your collector to enable)")
+	} else {
+		fmt.Printf("    · Tracing:       → %s  (your collector; set OFF by clearing FLOCK_OTLP_ENDPOINT)\n", cfg.Observability.OTLPEndpoint)
+	}
+
+	// Update check
+	if os.Getenv("FLOCK_NO_UPDATE_CHECK") == "1" {
+		fmt.Println("    · Update check:  OFF  (FLOCK_NO_UPDATE_CHECK=1)")
+	} else {
+		fmt.Println("    · Update check:  github.com/hadihonarvar/flock/releases/latest, max 1× per 24h  (FLOCK_NO_UPDATE_CHECK=1 to disable)")
+	}
+
+	// Vendor egress — only print rows where the operator opted in.
+	if cfg.Router.Fallback.AnthropicKey != "" {
+		fmt.Println("    · Anthropic:     → api.anthropic.com on claude-* requests  (ANTHROPIC_API_KEY set)")
+	}
+	if cfg.Router.Fallback.OpenAIKey != "" {
+		fmt.Println("    · OpenAI:        → api.openai.com on gpt-*/o-* requests  (OPENAI_API_KEY set)")
+	}
+	if cfg.Router.Fallback.BedrockRegion != "" {
+		fmt.Printf("    · Bedrock:       → bedrock-runtime.%s.amazonaws.com on anthropic.* (SigV4 via AWS chain)\n", cfg.Router.Fallback.BedrockRegion)
+	}
+	if cfg.Router.Fallback.VertexProject != "" {
+		fmt.Printf("    · Vertex:        → %s-aiplatform.googleapis.com (ADC for project %s)\n", orDefault(cfg.Router.Fallback.VertexLocation, "us-central1"), cfg.Router.Fallback.VertexProject)
+	}
+
+	fmt.Println("    · Telemetry:     none. Flock never reports installs, usage, errors, or any data to flockllm.com.")
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // isLlamaCppEngine matches every alias the engine registry accepts for
