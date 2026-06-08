@@ -14,42 +14,42 @@ import (
 
 // Entry is a single catalog entry, loaded from catalog/<id>.yaml.
 type Entry struct {
-	ID                 string       `yaml:"id"`
-	DisplayName        string       `yaml:"display_name"`
-	Source             SourceSpec   `yaml:"source"`
-	SizeBytes          int64        `yaml:"size_bytes"`
-	Quant              string       `yaml:"quant"`
-	ContextWindow      int          `yaml:"context_window"`
-	Capabilities       []string     `yaml:"capabilities"`
-	RecommendedEngines []string     `yaml:"recommended_engines"`
-	Hardware           HardwareSpec `yaml:"hardware"`
-	Tags               []string     `yaml:"tags"`
-	Sharding           ShardingSpec `yaml:"sharding,omitempty"`
+	ID                 string       `yaml:"id"                            json:"id"`
+	DisplayName        string       `yaml:"display_name"                  json:"display_name"`
+	Source             SourceSpec   `yaml:"source"                        json:"source"`
+	SizeBytes          int64        `yaml:"size_bytes"                    json:"size_bytes"`
+	Quant              string       `yaml:"quant"                         json:"quant"`
+	ContextWindow      int          `yaml:"context_window"                json:"context_window"`
+	Capabilities       []string     `yaml:"capabilities"                  json:"capabilities"`
+	RecommendedEngines []string     `yaml:"recommended_engines"           json:"recommended_engines"`
+	Hardware           HardwareSpec `yaml:"hardware"                      json:"hardware"`
+	Tags               []string     `yaml:"tags"                          json:"tags"`
+	Sharding           ShardingSpec `yaml:"sharding,omitempty"            json:"sharding,omitempty"`
 
 	// License is a short identifier (SPDX where possible) of the model's
 	// release license. Examples: "apache-2.0", "mit", "llama-3-community",
 	// "llama-4-community", "gemma", "minisign-restricted". Surfaced in
 	// `flock model info` so commercial users see it before install.
-	License string `yaml:"license,omitempty"`
+	License string `yaml:"license,omitempty" json:"license,omitempty"`
 	// LicenseURL points at the canonical license text — usually the
 	// model's HuggingFace LICENSE file.
-	LicenseURL string `yaml:"license_url,omitempty"`
+	LicenseURL string `yaml:"license_url,omitempty" json:"license_url,omitempty"`
 
 	// Fallback is an ordered list of catalog IDs to try when the primary
 	// model can't serve a request (engine down, model not loaded, 503,
 	// timeout, etc.). Tried in order; the first that succeeds wins.
 	// Silent to clients — the response carries the requested model name.
 	// Operators see fallback hits in the audit log + stderr.
-	Fallback []string `yaml:"fallback,omitempty"`
+	Fallback []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`
 }
 
 // SourceSpec describes where to fetch model weights from.
 type SourceSpec struct {
-	Type       string `yaml:"type"` // ollama | huggingface | file
-	Repo       string `yaml:"repo,omitempty"`
-	File       string `yaml:"file,omitempty"` // specific file within an HF repo (for GGUF)
-	OllamaName string `yaml:"ollama_name,omitempty"`
-	Path       string `yaml:"path,omitempty"` // local filesystem path (for GGUF / safetensors)
+	Type       string `yaml:"type"                    json:"type"` // ollama | huggingface | file
+	Repo       string `yaml:"repo,omitempty"          json:"repo,omitempty"`
+	File       string `yaml:"file,omitempty"          json:"file,omitempty"` // specific file within an HF repo (for GGUF)
+	OllamaName string `yaml:"ollama_name,omitempty"   json:"ollama_name,omitempty"`
+	Path       string `yaml:"path,omitempty"          json:"path,omitempty"` // local filesystem path (for GGUF / safetensors)
 }
 
 // ShardingSpec is set when a model is too large for any single node and must
@@ -57,17 +57,17 @@ type SourceSpec struct {
 // served via the auto-orchestrator: rpc-server on each shard host + a
 // coordinator running `llama-server --rpc <list>`.
 type ShardingSpec struct {
-	Required        bool   `yaml:"required"`
-	DefaultShards   int    `yaml:"default_shards"`
-	Engine          string `yaml:"engine"`           // "llamacpp" (only supported in v0.4)
-	RPCPortBase     int    `yaml:"rpc_port_base"`    // workers bind rpc-server to this + shard index
-	CoordinatorPort int    `yaml:"coordinator_port"` // coordinator binds llama-server to this
+	Required        bool   `yaml:"required"          json:"required"`
+	DefaultShards   int    `yaml:"default_shards"    json:"default_shards"`
+	Engine          string `yaml:"engine"            json:"engine"`           // "llamacpp" (only supported in v0.4)
+	RPCPortBase     int    `yaml:"rpc_port_base"     json:"rpc_port_base"`    // workers bind rpc-server to this + shard index
+	CoordinatorPort int    `yaml:"coordinator_port"  json:"coordinator_port"` // coordinator binds llama-server to this
 }
 
 // HardwareSpec describes the minimum hardware a model needs to run reasonably.
 type HardwareSpec struct {
-	MinRAMGB  int `yaml:"min_ram_gb"`
-	MinVRAMGB int `yaml:"min_vram_gb,omitempty"`
+	MinRAMGB  int `yaml:"min_ram_gb"             json:"min_ram_gb"`
+	MinVRAMGB int `yaml:"min_vram_gb,omitempty"  json:"min_vram_gb,omitempty"`
 }
 
 // LoadCatalog reads every *.yaml file in dir (non-recursive) and returns parsed entries.

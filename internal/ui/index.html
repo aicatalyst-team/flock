@@ -702,28 +702,46 @@ async function renderModels() {
       api("/admin/v1/models"),
       api("/admin/v1/catalog"),
     ]);
+    // Build a lookup so we can join license + capabilities onto the installed row.
+    const byID = {};
+    (catalog || []).forEach((c) => { byID[c.id] = c; });
+
+    const licenseBadge = (lic, url) => {
+      if (!lic) return `<span class="text-xs text-slate-400">—</span>`;
+      const restrictive = !/^(apache-2\.0|mit|bsd|lfm-open)$/i.test(lic);
+      const color = restrictive ? "text-amber-700 bg-amber-50 border-amber-200" : "text-emerald-700 bg-emerald-50 border-emerald-200";
+      const label = `<span class="text-xs font-mono border px-1.5 py-0.5 rounded ${color}" title="${url || ''}">${lic}</span>`;
+      return url ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="hover:underline">${label}</a>` : label;
+    };
+
     const installedSet = new Set((installed || []).map((m) => m.CatalogID));
-    const installedRows = (installed || []).map((m) => [
-      `<span class="code">${m.CatalogID}</span>`,
-      stateBadge(m.Status),
-      `<span class="code">${m.Source}</span>`,
-      m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
-      new Date(m.InstalledAt).toLocaleString(),
-      `<button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>`,
-    ]);
+    const installedRows = (installed || []).map((m) => {
+      const c = byID[m.CatalogID] || {};
+      return [
+        `<span class="code">${m.CatalogID}</span>`,
+        stateBadge(m.Status),
+        licenseBadge(c.license, c.license_url),
+        `<span class="code">${m.Source}</span>`,
+        m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
+        new Date(m.InstalledAt).toLocaleString(),
+        `<button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>`,
+      ];
+    });
     const catalogOptions = (catalog || [])
       .filter((c) => !installedSet.has(c.id))
       .map((c) => {
         const sz = c.size_bytes ? (c.size_bytes / 1e9).toFixed(1) + " GB" : "?";
         const sharded = c.sharding && c.sharding.required ? " (sharded)" : "";
-        return `<option value="${c.id}">${c.id} — ${c.display_name} · ${sz}${sharded}</option>`;
+        const lic = c.license ? ` · ${c.license}` : "";
+        return `<option value="${c.id}">${c.id} — ${c.display_name} · ${sz}${sharded}${lic}</option>`;
       }).join("");
 
     root.innerHTML = `
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">Installed models</h2>
+        <p class="text-xs text-slate-500">License badge: <span class="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 rounded text-xs font-mono">permissive</span> · <span class="text-amber-700 bg-amber-50 border border-amber-200 px-1.5 rounded text-xs font-mono">check terms</span></p>
       </div>
-      ${table(["ID", "Status", "Source", "Size", "Installed", ""], installedRows)}
+      ${table(["ID", "Status", "License", "Source", "Size", "Installed", ""], installedRows)}
 
       <div class="bg-white border border-slate-200 rounded p-4 mt-6">
         <div class="text-sm font-semibold mb-2">Add a model from the catalog</div>
