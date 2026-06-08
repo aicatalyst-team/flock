@@ -158,6 +158,46 @@ export ANTHROPIC_API_KEY=sk-ant-...   # vendor
 # of which backend is configured.
 `,
 
+	"plandex": `# Plandex reads OPENAI_API_BASE + OPENAI_API_KEY from env.
+unset OPENAI_API_BASE
+unset OPENAI_API_KEY
+unset PLANDEX_MODEL
+
+# Restore your vendor key:
+export OPENAI_API_KEY=sk-...
+
+# Existing plans don't need to be re-created — Plandex picks up the
+# new endpoint on the next ` + "`plandex tell`" + ` invocation.
+`,
+
+	"openhands": `# OpenHands runs in Docker. Reverse by stopping the container and
+# relaunching without LLM_BASE_URL / LLM_API_KEY (or with vendor values):
+
+docker rm -f openhands
+
+# Restart pointing at your own provider:
+docker run -it --rm --pull=always \
+  -e LLM_MODEL=openai/gpt-4o \
+  -e LLM_API_KEY=sk-... \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ~/.openhands:/.openhands \
+  -p 3000:3000 \
+  --add-host host.docker.internal:host-gateway \
+  --name openhands \
+  docker.all-hands.dev/all-hands-ai/openhands:latest
+
+# Existing sandboxed sessions live in ~/.openhands — they survive the
+# restart and resume with the new provider.
+`,
+
+	"codex-cli": `# Codex CLI reads OPENAI_BASE_URL + OPENAI_API_KEY.
+unset OPENAI_BASE_URL
+export OPENAI_API_KEY=sk-...   # your real OpenAI key
+
+# Or remove the override from ~/.codex/config.yaml — delete the
+# "base_url:" line so Codex talks to api.openai.com.
+`,
+
 	"goose": `# Goose reads its provider from ~/.config/goose/config.yaml.
 # Reverse the Flock override:
 #
