@@ -33,6 +33,7 @@ var clients = []Client{
 	{ID: "openclaw", Protocol: "OpenAI", Description: "Open-source CLI coding agent (OpenAI-compatible)"},
 	{ID: "opencode", Protocol: "Both", Description: "Open-source terminal coding agent (per-provider baseURL override)"},
 	{ID: "open-webui", Protocol: "OpenAI", Description: "Self-hosted ChatGPT-style web UI (~85k★ on GitHub)"},
+	{ID: "open-notebook", Protocol: "OpenAI", Description: "Open-source NotebookLM alternative (MIT, ~27k★)"},
 	{ID: "goose", Protocol: "OpenAI", Description: "Block's OSS terminal agent (Apache-2.0, OpenAI-compatible)"},
 	{ID: "plandex", Protocol: "OpenAI", Description: "Terminal-native agentic planner (MIT, OpenAI-compatible)"},
 	{ID: "openhands", Protocol: "Both", Description: "Autonomous coding agent (formerly OpenDevin; MIT)"},

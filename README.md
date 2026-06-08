@@ -935,12 +935,13 @@ flock connect claude-code                          # Anthropic-shape: Claude Cod
 flock connect cursor                               # OpenAI-shape: Cursor, Aider, Zed, OpenClaw, Codex CLI, …
 flock connect hermes                               # Nous Research's CLI agent w/ persistent memory
 flock connect open-webui                           # self-hosted ChatGPT-style web UI (Docker)
+flock connect open-notebook                        # OSS NotebookLM clone (sources → chat + podcast)
 flock connect goose                                # Block's OSS terminal agent
 flock connect plandex                              # terminal-native agentic planner (MIT)
 flock connect openhands                            # autonomous coding agent (formerly OpenDevin)
 flock connect codex-cli                            # OpenAI's official CLI
 flock connect opencode                             # terminal coding agent w/ per-provider baseURL
-flock connect --list                               # full client roster (18 today)
+flock connect --list                               # full client roster (19 today)
 
 # Overrides
 flock connect cursor --model qwen-coder-14b        # suggest a specific model
@@ -949,7 +950,7 @@ FLOCK_TOKEN=sk-orc-… flock connect aider           # use a non-default token
 flock connect aider --token sk-orc-…               # same, via flag
 ```
 
-Anything that speaks OpenAI or Anthropic's API shape connects with one line. The full roster today: **claude-code**, **cursor**, **aider**, **continue**, **zed**, **cline**, **qwen-code**, **hermes**, **openclaw**, **opencode**, **open-webui**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **anthropic-sdk**, **curl**.
+Anything that speaks OpenAI or Anthropic's API shape connects with one line. The full roster today: **claude-code**, **cursor**, **aider**, **continue**, **zed**, **cline**, **qwen-code**, **hermes**, **openclaw**, **opencode**, **open-webui**, **open-notebook**, **goose**, **plandex**, **openhands**, **codex-cli**, **openai-sdk**, **anthropic-sdk**, **curl**.
 
 Token comes from `--token`, then `$FLOCK_TOKEN`, then `~/.flock/admin.key` (written when you ran `flock up`). Base URL comes from `--base-url`, then `external_url` in `~/.flock/config.yaml`, then `http://localhost:<listen>`.
 

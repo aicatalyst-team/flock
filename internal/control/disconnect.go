@@ -198,6 +198,32 @@ export OPENAI_API_KEY=sk-...   # your real OpenAI key
 # "base_url:" line so Codex talks to api.openai.com.
 `,
 
+	"open-notebook": `# Open Notebook reads credentials from either docker-compose's .env
+# or the in-UI Settings → API Keys panel. Reverse the one you used:
+#
+# Option A — .env: remove the OPENAI_API_BASE_URL line so the
+# container picks up its default (api.openai.com); keep the API
+# key value if it's still your OpenAI key, or swap to a vendor key:
+#
+#   # before
+#   OPENAI_API_BASE_URL=http://your-flock-host:8080/v1
+#   OPENAI_API_KEY=sk-orc-...
+#
+#   # after — drop the BASE_URL, keep / replace the key
+#   OPENAI_API_KEY=sk-...
+#
+# Then bounce the container:
+#   docker compose down && docker compose up -d
+#
+# Option B — UI: Settings → API Keys → find the "OpenAI Compatible"
+# credential pointing at your Flock host → Delete (or edit, replace
+# the base URL with https://api.openai.com/v1, replace the key).
+
+# Existing notebooks and source embeddings live in the open-notebook
+# Docker volume — they survive the swap. The next chat call uses
+# the new provider.
+`,
+
 	"goose": `# Goose reads its provider from ~/.config/goose/config.yaml.
 # Reverse the Flock override:
 #
