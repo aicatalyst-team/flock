@@ -620,7 +620,8 @@ flock up
 5. Fetches the **latest release** binary from GitHub Releases
 6. Verifies SHA-256 against `checksums.txt`
 7. Installs to `~/.local/bin/flock` (or `/usr/local/bin/flock` with sudo)
-8. Prints next steps + tells you if PATH needs updating
+8. Drops the bundled model catalog (`*.yaml`) into `~/.flock/catalog/` so `flock up` works without further setup
+9. Prints next steps + tells you if PATH needs updating
 
 ### Installer flags (after `| sh -s --`)
 
@@ -632,11 +633,39 @@ flock up
 --dry-run               show what would happen, no writes
 ```
 
+### Installer env vars (alternative to flags)
+
+```bash
+# pin a specific version (skips the GH API lookup — also avoids the 60/hr rate limit)
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh \
+  | FLOCK_VERSION=v1.14.0 sh
+
+# install to a custom dir
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh \
+  | FLOCK_INSTALL_DIR=/opt/flock/bin sh
+
+# skip the Ollama check (CI, custom engine setups)
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh \
+  | FLOCK_SKIP_ENGINE=1 sh
+```
+
 Install **and** join a cluster in one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | \
     sh -s -- join https://leader.local:8080?token=<TOKEN>
+```
+
+### Upgrade / uninstall
+
+```bash
+# upgrade in place (no need to re-run the installer)
+flock update              # downloads latest release, verifies SHA-256, swaps binary
+flock update --check      # just check, don't install
+
+# uninstall — remove binary, catalog, and data dir
+rm -f ~/.local/bin/flock       # or /usr/local/bin/flock if you sudo-installed
+rm -rf ~/.flock                 # catalog + data + config (destructive)
 ```
 
 ### Build from source
