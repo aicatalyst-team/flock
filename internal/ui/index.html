@@ -801,10 +801,46 @@ async function renderShards() {
   const root = $("#view-shards");
   root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
   try {
-    const shards = (await api("/admin/v1/shards")) || [];
+    const [shards, procs] = await Promise.all([
+      api("/admin/v1/shards"),
+      api("/admin/v1/shards/processes").catch(() => []),
+    ]);
+    const procByID = {};
+    (procs || []).forEach((p) => { procByID[p.id] = p; });
+
+    const runtimeBadge = (shard) => {
+      const p = procByID[shard.ProcessID];
+      if (!p) {
+        // Process isn't tracked by the leader's supervisor — typically a
+        // rpc-server on a worker, or a coordinator that's been placed on
+        // a worker. Fall back to the shard row's static Status.
+        return stateBadge(shard.Status) + ` <span class="text-xs text-slate-400">(remote)</span>`;
+      }
+      // Crashloop is the dangerous state — render it bright red so on-call
+      // can't miss it. Failed = same shape but transient. Running = green.
+      const colors = {
+        running:   "bg-green-100 text-green-700",
+        starting:  "bg-amber-100 text-amber-700",
+        stopped:   "bg-slate-200 text-slate-700",
+        failed:    "bg-red-100 text-red-700",
+        crashloop: "bg-red-600 text-white font-bold",
+      };
+      const c = colors[p.status] || "bg-slate-100 text-slate-700";
+      return `<span class="text-xs px-2 py-0.5 rounded ${c}" title="PID ${p.pid}${p.exit_err ? '\n' + p.exit_err : ''}">${p.status}</span>`;
+    };
+
+    const restartsCell = (shard) => {
+      const p = procByID[shard.ProcessID];
+      if (!p) return `<span class="text-xs text-slate-400">—</span>`;
+      const n = p.restarts || 0;
+      if (n === 0) return `<span class="text-xs text-slate-500">0</span>`;
+      const color = n >= 4 ? "text-red-700 font-bold" : n >= 2 ? "text-amber-700" : "text-slate-700";
+      return `<span class="text-xs ${color}" title="Auto-restart count since launch (capped at 5 → crashloop)">${n}</span>`;
+    };
+
     // Group by model for readability
     const groups = {};
-    for (const s of shards) {
+    for (const s of shards || []) {
       (groups[s.ModelID] ||= []).push(s);
     }
     const groupNames = Object.keys(groups).sort();
@@ -815,7 +851,8 @@ async function renderShards() {
             roleBadge(s.Role),
             `<span class="code">${s.NodeID}</span>`,
             `<span class="code">${s.Address}</span>`,
-            stateBadge(s.Status),
+            runtimeBadge(s),
+            restartsCell(s),
             new Date(s.LastSeen).toLocaleString(),
             `<button class="text-red-600 hover:underline text-xs" onclick="removeSharded('${mid}')">remove model</button>`,
           ]);
@@ -828,7 +865,7 @@ async function renderShards() {
                 </div>
                 <button class="text-red-600 hover:underline text-sm" onclick="removeSharded('${mid}')">Tear down</button>
               </div>
-              ${table(["Role", "Node", "Address", "Status", "Last seen", ""], rows)}
+              ${table(["Role", "Node", "Address", "Runtime", "Restarts", "Last seen", ""], rows)}
             </div>`;
         }).join("");
 
@@ -860,7 +897,10 @@ async function renderShards() {
       <div class="space-y-4">${groupHTML}</div>
 
       <div class="mt-6 bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
-        <strong>Prereqs:</strong> The leader must have <span class="code">llama-server</span> installed (from <span class="code">brew install llama.cpp</span>), each worker must have <span class="code">rpc-server</span> on PATH, and the catalog entry needs <span class="code">sharding.required: true</span> plus a local GGUF path in <span class="code">source.path</span>.
+        <strong>Prereqs:</strong> The leader must have <span class="code">llama-server</span> installed (from <span class="code">brew install llama.cpp</span>), each worker must have <span class="code">rpc-server</span> on PATH, and the catalog entry needs <span class="code">sharding.required: true</span> plus a local GGUF path in <span class="code">source.path</span>. Sharded GGUFs are auto-uploaded to every worker (sha256-verified).
+      </div>
+      <div class="mt-3 bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-600">
+        <strong>Runtime states:</strong> <span class="px-1.5 py-0.5 rounded bg-green-100 text-green-700">running</span> · <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">starting</span> · <span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700">failed</span> (transient, auto-restart kicks in) · <span class="px-1.5 py-0.5 rounded bg-red-600 text-white font-bold">crashloop</span> (5 restarts exhausted — operator must intervene). Remote rpc-server processes show "(remote)" until v0.7 fans out the supervisor probe to workers.
       </div>`;
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;

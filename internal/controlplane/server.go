@@ -226,6 +226,7 @@ func (s *Server) routes() http.Handler {
 
 			// Shards
 			r.Get("/shards", s.listShards)
+			r.Get("/shards/processes", s.listShardProcesses)
 			r.Post("/shards/create", s.createShards)
 			r.Delete("/shards/{model_id}", s.deleteShards)
 
@@ -719,6 +720,21 @@ func (s *Server) listShards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, shs)
+}
+
+// listShardProcesses returns the leader's supervisor view of every process
+// it manages, keyed by ProcessID. The dashboard joins this against the
+// shard rows from /shards to surface Restarts + the live runtime status
+// (which can be running | starting | stopped | failed | crashloop). For
+// shards that run on a worker (rpc-server, or a coordinator placed on a
+// non-leader host), the leader doesn't see the process directly — the
+// dashboard renders "—" for those.
+func (s *Server) listShardProcesses(w http.ResponseWriter, r *http.Request) {
+	if s.orch == nil || s.orch.Supervisor == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.orch.Supervisor.List())
 }
 
 func (s *Server) createShards(w http.ResponseWriter, r *http.Request) {
