@@ -39,17 +39,55 @@ jobs:
           fetch-depth: 0
 
       - name: Determine version bump from Conventional Commits
+        # Inline bash replaces mathieudutour/github-tag-action@v6.2, which
+        # has been unmaintained since 2024 and still runs on Node 20 (gone
+        # from GitHub Actions on 2026-06-16). Logic kept identical:
+        #   feat!:/BREAKING CHANGE → major
+        #   feat:                   → minor
+        #   fix:                    → patch
+        #   anything else           → no bump (default_bump: false)
         id: tag
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # If no commit since the last tag has a feat:/fix:/BREAKING prefix,
-          # do not bump. (Prevents docs-only / chore-only pushes from cutting
-          # a release.)
-          default_bump: false
-          fetch_all_tags: true
-          tag_prefix: v
-          release_branches: main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Last tag (defaults to v0.0.0 if there are no tags yet).
+          last_tag=$(git tag --sort=-v:refname | head -1)
+          last_tag="${last_tag:-v0.0.0}"
+          echo "previous tag: $last_tag"
+          # Walk commits since last tag and classify by Conventional Commits prefix.
+          commits=$(git log --pretty=format:'%s%n%b%n---' "$last_tag"..HEAD)
+          bump=""
+          if grep -qE '^(feat|fix|chore|refactor|test|docs|ci|build|perf|style)!:' <<< "$commits" \
+             || grep -qE 'BREAKING CHANGE' <<< "$commits"; then
+            bump="major"
+          elif grep -qE '^feat(\([^)]*\))?:' <<< "$commits"; then
+            bump="minor"
+          elif grep -qE '^fix(\([^)]*\))?:' <<< "$commits"; then
+            bump="patch"
+          fi
+          if [ -z "$bump" ]; then
+            echo "no feat/fix/breaking commits since $last_tag — skipping release"
+            echo "new_tag=" >> "$GITHUB_OUTPUT"
+            echo "release_type=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Bump <major>.<minor>.<patch> per the classification.
+          ver="${last_tag#v}"
+          IFS='.' read -r maj min pat <<< "$ver"
+          case "$bump" in
+            major) maj=$((maj+1)); min=0; pat=0 ;;
+            minor) min=$((min+1)); pat=0 ;;
+            patch) pat=$((pat+1)) ;;
+          esac
+          new_tag="v${maj}.${min}.${pat}"
+          echo "new tag: $new_tag (bump: $bump)"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$new_tag" -m "Release $new_tag"
+          git push origin "$new_tag"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "release_type=$bump" >> "$GITHUB_OUTPUT"
 
   release:
     needs: bump
