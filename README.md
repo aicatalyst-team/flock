@@ -679,11 +679,14 @@ router:
     enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
     anthropic_url: "https://api.anthropic.com"
     openai_url:    "https://api.openai.com"
-    # Bedrock (AWS) — detection ships, SigV4 signing is v0.7. Setting
-    # bedrock_region routes `anthropic.*`/`amazon.*`/... model IDs but
-    # the request currently returns 501 with a setup hint.
+    # Bedrock (AWS) — signed via aws-sdk-go-v2 using the standard AWS
+    # credentials chain (env, shared config, instance role). v0.6 supports
+    # the anthropic.* model family non-streaming; amazon.*/meta.*/mistral.*
+    # return 501 (body translation arrives v0.7).
     bedrock_region: ""                # e.g. us-east-1
-    # Vertex (GCP) — detection ships, ADC auth is v0.7. Same shape.
+    # Vertex (GCP) — ADC auth probe wired; body translation for
+    # generateContent lands v0.7. Set the project and a 501 with ADC
+    # status returns until then.
     vertex_project:  ""               # GCP project id
     vertex_location: "us-central1"
 
@@ -709,8 +712,8 @@ observability:
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 | `FLOCK_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader is on v0.5+. |
-| `FLOCK_BEDROCK_REGION` | `router.fallback.bedrock_region` (enables Bedrock model detection — signing arrives in v0.7) |
-| `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` (enables Vertex Gemini detection — auth arrives in v0.7) |
+| `FLOCK_BEDROCK_REGION` | `router.fallback.bedrock_region` — enables Bedrock with real SigV4 signing for the anthropic.* family (v0.6); other families return 501 |
+| `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation lands v0.7 |
 | `FLOCK_VERTEX_LOCATION` | `router.fallback.vertex_location` (default `us-central1`) |
 
 ### Not yet configurable (roadmap)

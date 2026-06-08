@@ -98,40 +98,84 @@ func (e *EgressHandler) ServeAnthropic(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeBedrock would proxy a request to AWS Bedrock for an
-// `anthropic.*` / `amazon.*` / `meta.*` model. SigV4 signing is required;
-// the current build returns 501 with the operator config that's missing.
-// Tracked as ROADMAP P1 (v0.7).
+// ServeBedrock proxies a /v1/messages request to AWS Bedrock for an
+// `anthropic.*` model. The body format Bedrock-Anthropic expects is
+// identical to Anthropic's own /v1/messages (Bedrock just adds SigV4
+// signing), so we forward the body verbatim, signed with SigV4 via
+// the standard AWS credentials chain (env, shared config, instance role).
+//
+// Other model families (amazon.*, meta.*, mistral.*) use Bedrock-specific
+// body shapes — those return a 501 with the family-specific install hint
+// until v0.7.
 func (e *EgressHandler) ServeBedrock(w http.ResponseWriter, r *http.Request) {
 	if e.Config.BedrockRegion == "" {
 		writeJSONError(w, http.StatusServiceUnavailable, "configuration_error",
 			"Bedrock egress not configured; set router.fallback.bedrock_region (or FLOCK_BEDROCK_REGION)")
 		return
 	}
-	// Detection works, the routing pipe is wired up — what's missing is the
-	// SigV4 signer. Returning 501 here keeps the user-visible error
-	// actionable instead of silently falling through to "model not found".
-	writeJSONError(w, http.StatusNotImplemented, "not_implemented",
-		"Bedrock egress detection is shipped (region="+e.Config.BedrockRegion+
-			") but SigV4 signing is not yet implemented — tracked as ROADMAP P1 (v0.7). "+
-			"In the meantime, configure your client to talk to Bedrock directly.")
-	recordEgress(r.Context(), e.Store, "bedrock", peekVendorModelFromRequest(r), time.Now(), "not_implemented")
+	start := time.Now()
+	body, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "read_error", err.Error())
+		recordEgress(r.Context(), e.Store, "bedrock", "unknown", start, "error")
+		return
+	}
+	model := peekVendorModel(body)
+	if !strings.HasPrefix(model, "anthropic.") {
+		writeJSONError(w, http.StatusNotImplemented, "not_implemented",
+			"Bedrock body translation for "+model+" lands in v0.7 — "+
+				"only anthropic.* models work today via Bedrock egress. "+
+				"In the meantime, call Bedrock directly for non-Anthropic families.")
+		recordEgress(r.Context(), e.Store, "bedrock", model, start, "not_implemented")
+		return
+	}
+	// Bedrock expects the Anthropic body shape but DOES NOT want the "model"
+	// field (the model id goes in the URL path). Strip it.
+	stripped, err := stripModelField(body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "body_error", err.Error())
+		recordEgress(r.Context(), e.Store, "bedrock", model, start, "error")
+		return
+	}
+	// Also Bedrock requires "anthropic_version" in the body (not a header).
+	stripped = ensureAnthropicVersion(stripped)
+
+	if err := e.invokeBedrock(w, r, model, stripped); err != nil {
+		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
+		recordEgress(r.Context(), e.Store, "bedrock", model, start, "error")
+		return
+	}
+	recordEgress(r.Context(), e.Store, "bedrock", model, start, "ok")
 }
 
-// ServeVertex would proxy to Google Vertex AI for a `gemini-*` model. ADC
-// auth (gcloud / service account / workload identity) is the missing piece.
-// Same v0.7 story as ServeBedrock.
+// ServeVertex proxies to Google Vertex AI for a `gemini-*` model. As of v0.6
+// ADC auth is wired (cloud.google.com/go/auth) so the credentials chain
+// works (gcloud, service account JSON, workload identity). What's NOT yet
+// wired is the body-shape translation from OpenAI / Anthropic message
+// format → Vertex's `generateContent` Contents shape — that's v0.7.
+//
+// To make the 501 actionable we mint a token to confirm ADC actually works
+// against the configured project, then return the error with project id.
 func (e *EgressHandler) ServeVertex(w http.ResponseWriter, r *http.Request) {
 	if e.Config.VertexProject == "" {
 		writeJSONError(w, http.StatusServiceUnavailable, "configuration_error",
 			"Vertex egress not configured; set router.fallback.vertex_project (or FLOCK_VERTEX_PROJECT)")
 		return
 	}
+	model := peekVendorModelFromRequest(r)
+	tokenOK := e.checkVertexADC(r.Context())
+	hint := "ADC auth check: "
+	if tokenOK == "" {
+		hint += "✓ OK (token obtained for project " + e.Config.VertexProject + ")"
+	} else {
+		hint += "✗ FAILED — " + tokenOK
+	}
 	writeJSONError(w, http.StatusNotImplemented, "not_implemented",
-		"Vertex egress detection is shipped (project="+e.Config.VertexProject+
-			") but ADC auth is not yet implemented — tracked as ROADMAP P1 (v0.7). "+
-			"In the meantime, configure your client to talk to Vertex directly.")
-	recordEgress(r.Context(), e.Store, "vertex", peekVendorModelFromRequest(r), time.Now(), "not_implemented")
+		"Vertex egress: "+hint+". Body translation (OpenAI/Anthropic → "+
+			"Vertex generateContent) lands in v0.7. In the meantime, call "+
+			"Vertex directly for "+model+".")
+	recordEgress(r.Context(), e.Store, "vertex", model, time.Now(), "not_implemented")
 }
 
 // peekVendorModelFromRequest sniffs the model name from the request body
