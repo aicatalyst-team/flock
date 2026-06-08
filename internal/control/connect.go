@@ -31,6 +31,7 @@ var clients = []Client{
 	{ID: "qwen-code", Protocol: "Anthropic", Description: "Open-source Claude Code fork"},
 	{ID: "hermes", Protocol: "Anthropic", Description: "Nous Research's CLI agent (persistent memory + auto skills)"},
 	{ID: "openclaw", Protocol: "OpenAI", Description: "Open-source CLI coding agent (OpenAI-compatible)"},
+	{ID: "opencode", Protocol: "Both", Description: "Open-source terminal coding agent (per-provider baseURL override)"},
 	{ID: "openai-sdk", Protocol: "OpenAI", Description: "OpenAI Python/JS SDK"},
 	{ID: "anthropic-sdk", Protocol: "Anthropic", Description: "Anthropic Python/JS SDK"},
 	{ID: "curl", Protocol: "Raw HTTP", Description: "Direct HTTP calls for testing"},

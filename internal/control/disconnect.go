@@ -135,6 +135,26 @@ export ANTHROPIC_API_KEY=sk-ant-...   # vendor
 # or just rerun ` + "`hermes`" + ` and pick a provider in the first prompt.
 `,
 
+	"opencode": `# OpenCode reads its endpoint from opencode.json (project root or
+# ~/.config/opencode/opencode.json). Reverse the Flock override by
+# deleting the per-provider "options.baseURL" + "options.apiKey" keys
+# you added when you ran ` + "`flock connect opencode`" + `:
+#
+#   # before
+#   "provider": {
+#     "openai":    { "options": { "baseURL": "...", "apiKey": "sk-orc-..." } },
+#     "anthropic": { "options": { "baseURL": "...", "apiKey": "sk-orc-..." } }
+#   }
+#
+#   # after — drop the options blocks (or the whole "provider" key)
+#   # OpenCode falls back to its built-in defaults: api.openai.com /
+#   # api.anthropic.com with whatever API key the provider env var holds.
+
+# Then set your vendor key(s) as needed:
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+`,
+
 	"openclaw": `# OpenClaw reads its endpoint from config.yaml (or .env). Reverse by
 # editing the file you wrote when you ran ` + "`flock connect openclaw`" + `:
 #
