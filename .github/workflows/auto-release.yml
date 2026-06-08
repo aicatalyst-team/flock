@@ -58,8 +58,13 @@ jobs:
           # Walk commits since last tag and classify by Conventional Commits prefix.
           commits=$(git log --pretty=format:'%s%n%b%n---' "$last_tag"..HEAD)
           bump=""
+          # BREAKING CHANGE per the Conventional Commits spec must be a
+          # footer line — i.e. a line that STARTS with "BREAKING CHANGE:"
+          # (or "BREAKING-CHANGE:"). The looser substring match here used
+          # to mean any commit describing the script in prose triggered a
+          # major bump on itself (this footer doesn't, because of the ^).
           if grep -qE '^(feat|fix|chore|refactor|test|docs|ci|build|perf|style)!:' <<< "$commits" \
-             || grep -qE 'BREAKING CHANGE' <<< "$commits"; then
+             || grep -qE '^BREAKING[ -]CHANGE:' <<< "$commits"; then
             bump="major"
           elif grep -qE '^feat(\([^)]*\))?:' <<< "$commits"; then
             bump="minor"

@@ -36,7 +36,7 @@ func (o *Orchestrator) ensureLocalGGUF(ctx context.Context, entry models.Entry) 
 			return "", fmt.Errorf("catalog %s: source.type=file requires source.path", entry.ID)
 		}
 		if _, err := os.Stat(entry.Source.Path); err != nil {
-			return "", fmt.Errorf("catalog %s: source.path %q not present and source.type is file (not huggingface — can't auto-download). Place the GGUF manually or change source.type to huggingface.", entry.ID, entry.Source.Path)
+			return "", fmt.Errorf("catalog %s: source.path %q not present and source.type=file (place the GGUF manually or change source.type to huggingface for auto-download)", entry.ID, entry.Source.Path)
 		}
 		return entry.Source.Path, nil
 
