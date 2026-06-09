@@ -177,6 +177,40 @@ func (o *Ollama) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, er
 	}, nil
 }
 
+// Unload asks Ollama to drop the model from memory by sending a no-op
+// generate request with keep_alive=0. This is Ollama's documented
+// unload mechanism — it does not delete the weights from disk.
+func (o *Ollama) Unload(ctx context.Context, modelID string) error {
+	body, _ := json.Marshal(map[string]any{
+		"model":      modelID,
+		"keep_alive": 0,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("unload request: %w", err)
+	}
+	defer resp.Body.Close()
+	// 404 from /api/generate means Ollama doesn't recognize the model
+	// name — for an unload caller, the desired post-state ("not in RAM")
+	// already holds. Treat as success so `flock model unload` doesn't
+	// red-error when the user calls it on a not-currently-loaded model
+	// (the whole point of the command is to free RAM, which is already
+	// the case).
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unload failed: %s: %s", resp.Status, string(b))
+	}
+	return nil
+}
+
 func (o *Ollama) Delete(ctx context.Context, modelID string) error {
 	body, _ := json.Marshal(map[string]any{"name": modelID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, o.endpoint+"/api/delete", bytes.NewReader(body))

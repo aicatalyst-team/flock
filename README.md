@@ -664,7 +664,7 @@ flock update              # downloads latest release, verifies SHA-256, swaps bi
 flock update --check      # just check, don't install
 
 # uninstall — remove binary, catalog, and data dir
-rm -f ~/.local/bin/flock       # or /usr/local/bin/flock if you sudo-installed
+rm -f ~/.local/bin/flock       # (sudo-installed? then /usr/local/bin/flock)
 rm -rf ~/.flock                 # catalog + data + config (destructive)
 ```
 

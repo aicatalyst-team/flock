@@ -114,6 +114,12 @@ func (l *LlamaCppRPC) Pull(ctx context.Context, modelID string, onProgress func(
 // Delete is a no-op for the same reason.
 func (l *LlamaCppRPC) Delete(ctx context.Context, modelID string) error { return nil }
 
+// Unload is not supported by llama-server — it owns one model per process.
+// When Flock auto-spawned llama-server, `flock up`'s supervisor stops the
+// process on shutdown (which frees memory). User-managed llama-server must
+// be restarted to free RAM.
+func (l *LlamaCppRPC) Unload(ctx context.Context, modelID string) error { return ErrUnloadNotSupported }
+
 // Chat proxies an OpenAI chat completion to llama-server and adapts the
 // streamed SSE response back into Flock's StreamEvent channel.
 func (l *LlamaCppRPC) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {

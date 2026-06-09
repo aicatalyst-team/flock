@@ -101,6 +101,10 @@ func (v *VLLM) Delete(ctx context.Context, modelID string) error {
 	return nil
 }
 
+// Unload is not supported by vLLM — it owns one model per process.
+// Restart the vLLM server to free its memory.
+func (v *VLLM) Unload(ctx context.Context, modelID string) error { return ErrUnloadNotSupported }
+
 // Chat proxies an OpenAI chat completion to vLLM and adapts the streamed
 // SSE response back into Flock's StreamEvent channel.
 func (v *VLLM) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {

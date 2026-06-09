@@ -81,6 +81,9 @@ func (m *MLX) Pull(ctx context.Context, modelID string, onProgress func(string, 
 
 func (m *MLX) Delete(ctx context.Context, modelID string) error { return nil }
 
+// Unload is not supported by mlx_lm.server — restart the daemon to free RAM.
+func (m *MLX) Unload(ctx context.Context, modelID string) error { return ErrUnloadNotSupported }
+
 // Chat proxies an OpenAI chat completion to mlx_lm.server.
 func (m *MLX) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
 	ctx, span := startChatSpan(ctx, "mlx", req.Model, m.endpoint, len(req.Messages))

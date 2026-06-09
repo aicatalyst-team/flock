@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/url"
@@ -31,6 +32,8 @@ func cmdUp(args []string) {
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.flock/config.yaml)")
 	autoPull := fs.Bool("auto-pull", true, "auto-pull the default model on first run")
 	noWizard := fs.Bool("no-wizard", false, "skip the interactive first-run prompt; combine with --auto-pull=false for a fully quiet boot")
+	unloadOnExit := fs.Bool("unload-on-exit", os.Getenv("FLOCK_UNLOAD_ON_EXIT") == "1",
+		"on Ctrl-C, ask the engine to drop loaded models from RAM (FLOCK_UNLOAD_ON_EXIT=1 sets the default)")
 	fs.Usage = func() {
 		showHelp(helpSpec{
 			name:    "up",
@@ -205,6 +208,54 @@ func cmdUp(args []string) {
 	if err := srv.Start(ctx); err != nil {
 		die("server: %v", err)
 	}
+
+	// Optional: ask the engine to drop every model it has resident in RAM
+	// before we exit. The serve context has already been cancelled (that's
+	// why srv.Start returned), so we use fresh bounded contexts. Best-
+	// effort — failures degrade to a soft warning, not a non-zero exit.
+	//
+	// For engines that don't support online unload (llamacpp / vLLM /
+	// MLX-LM), this is a silent no-op: when Flock auto-spawned them, the
+	// deferred sup.StopAll() (registered earlier and run AFTER this block
+	// per LIFO defer order) kills the process and frees the RAM; when the
+	// user manages them, Flock has no business calling restart on their
+	// behalf. Either way the "restart it to free RAM" hint would be
+	// misleading in this exit path.
+	if *unloadOnExit {
+		uCtx, uCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		loaded, listErr := eng.List(uCtx)
+		if listErr != nil {
+			warn(os.Stdout, "unload-on-exit: could not list models (%v)", listErr)
+			uCancel()
+		} else {
+			var unloaded, skipped int
+			var firstErr error
+			for _, m := range loaded {
+				err := eng.Unload(uCtx, m)
+				switch {
+				case err == nil:
+					unloaded++
+				case errors.Is(err, engines.ErrUnloadNotSupported):
+					skipped++
+				default:
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+			}
+			uCancel()
+			switch {
+			case firstErr == nil && unloaded > 0:
+				ok(os.Stdout, "unloaded %d model(s) from %s", unloaded, eng.Name())
+			case firstErr != nil:
+				warn(os.Stdout, "unload-on-exit: %v (succeeded for %d)", firstErr, unloaded)
+			case skipped > 0:
+				// All models were on a non-supporting engine — say nothing;
+				// sup.StopAll() (LIFO defer) will free Flock-owned engines.
+			}
+		}
+	}
+
 	ok(os.Stdout, "shutdown complete")
 }
 

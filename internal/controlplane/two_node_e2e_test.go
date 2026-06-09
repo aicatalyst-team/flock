@@ -189,6 +189,7 @@ func (s *stubLeaderEngine) Pull(ctx context.Context, _ string, _ func(string, in
 	return nil
 }
 func (s *stubLeaderEngine) Delete(ctx context.Context, _ string) error { return nil }
+func (s *stubLeaderEngine) Unload(ctx context.Context, _ string) error { return nil }
 func (s *stubLeaderEngine) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
 	return nil, nil
 }
@@ -210,6 +211,7 @@ func (s *stubWorkerEngine) Pull(ctx context.Context, _ string, _ func(string, in
 	return nil
 }
 func (s *stubWorkerEngine) Delete(ctx context.Context, _ string) error { return nil }
+func (s *stubWorkerEngine) Unload(ctx context.Context, _ string) error { return nil }
 func (s *stubWorkerEngine) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
 	return nil, nil
 }

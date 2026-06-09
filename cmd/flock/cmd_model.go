@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
 )
@@ -32,6 +34,7 @@ func cmdModel(args []string) {
 			"flock model add qwen3.6-27b --dry-run      # preview download size, RAM, engine — no pull",
 			"flock model ls                    # list installed models",
 			"flock model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
+			"flock model unload llama-3.2-3b   # drop from engine RAM without deleting weights (Ollama)",
 		},
 		notes: []string{
 			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
@@ -96,9 +99,58 @@ func cmdModel(args []string) {
 			}
 		}
 		modelInfo(id, asJSON)
+	case "unload":
+		id := ""
+		if len(args) >= 2 {
+			id = args[1]
+		}
+		if id == "" || !installedHasID(id) {
+			id = pickInstalledID("Pick an installed model to unload:", id)
+			if id == "" {
+				die("no model selected")
+			}
+		}
+		modelUnload(id)
 	default:
 		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
+}
+
+// modelUnload asks the engine to drop a loaded model from RAM without
+// deleting its weights from disk. For Ollama this issues a no-op generate
+// request with keep_alive=0. Engines that don't support unload (vLLM,
+// MLX-LM, llama-server) print a soft warning rather than failing — the
+// user can always restart the engine.
+func modelUnload(id string) {
+	cfg := loadConfigOrExit()
+	cat, err := models.LoadCatalog(cfg.CatalogDir)
+	if err != nil {
+		die("load catalog: %v", err)
+	}
+	entry := models.FindByID(cat, id)
+	eng := newEngineFromConfig(cfg)
+	name := id
+	if entry != nil {
+		if n := engineNativeName(eng.Name(), entry); n != "" {
+			name = n
+		}
+	}
+	// Bounded context: a wedged-but-listening engine should fail fast,
+	// not hang the CLI indefinitely. 10s is enough for Ollama to
+	// acknowledge keep_alive=0 even on a busy GPU.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := eng.Health(ctx); err != nil {
+		die("engine not reachable (%v) — nothing to unload", err)
+	}
+	if err := eng.Unload(ctx, name); err != nil {
+		if errors.Is(err, engines.ErrUnloadNotSupported) {
+			warn(os.Stdout, "%s does not support online unload — restart the engine to free RAM", eng.Name())
+			return
+		}
+		die("unload failed: %v", err)
+	}
+	ok(os.Stdout, "unloaded %s from %s (weights still on disk)", id, eng.Name())
 }
 
 // catalogHasID is a cheap membership check used to decide whether to fall
@@ -320,7 +372,11 @@ func modelAdd(id string, force bool) {
 }
 
 // engineNativeName picks the right field from the catalog source for a given
-// engine. Returns "" if no compatible field is set.
+// engine (e.g. Source.OllamaName for ollama, Source.Repo for vllm/mlx).
+// Falls back to e.ID when no engine-native field is set — callers that need
+// to detect "no native name available" should compare against e.ID, not
+// against "". (The earlier contract said it returned "" on a miss; the
+// implementation never did, so the docstring was the bug.)
 func engineNativeName(engine string, e *models.Entry) string {
 	switch engine {
 	case "ollama":

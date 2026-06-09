@@ -144,6 +144,13 @@ func (r *Router) Delete(ctx context.Context, modelID string) error {
 	return r.local.Delete(ctx, modelID)
 }
 
+// Unload forwards to the local engine. Cluster-wide unload (every remote
+// holding a shard) isn't implemented yet — sharded models already tear
+// down via the orchestrator's process-stop path on the workers.
+func (r *Router) Unload(ctx context.Context, modelID string) error {
+	return r.local.Unload(ctx, modelID)
+}
+
 // Embed dispatches an embedding request, with optional fallback. Tries the
 // primary model first; on retriable error, walks the fallback chain in
 // order. If every candidate fails, returns the PRIMARY's error since that's

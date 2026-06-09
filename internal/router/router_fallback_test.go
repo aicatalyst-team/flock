@@ -30,6 +30,7 @@ func (s *stubEngine) Pull(ctx context.Context, _ string, _ func(string, int64, i
 	return nil
 }
 func (s *stubEngine) Delete(ctx context.Context, _ string) error { return nil }
+func (s *stubEngine) Unload(ctx context.Context, _ string) error { return nil }
 
 func (s *stubEngine) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
 	s.calls = append(s.calls, req.Model)

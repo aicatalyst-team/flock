@@ -3,7 +3,16 @@
 // abstract over the underlying inference server.
 package engines
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrUnloadNotSupported is returned by Engine.Unload when the engine
+// has no protocol-level unload operation (vLLM, MLX-LM, llama-server).
+// Callers should surface it as a soft warning, not a hard failure —
+// the user can always restart the engine if they need the memory back.
+var ErrUnloadNotSupported = errors.New("engine does not support unload")
 
 // Engine is implemented by every inference backend driver.
 type Engine interface {
@@ -14,6 +23,13 @@ type Engine interface {
 	List(ctx context.Context) ([]string, error)
 	Pull(ctx context.Context, modelID string, onProgress func(status string, completed, total int64)) error
 	Delete(ctx context.Context, modelID string) error
+
+	// Unload asks the engine to drop the named model from memory without
+	// uninstalling its weights. Engines that can't (vLLM, MLX-LM,
+	// llama-server) return ErrUnloadNotSupported and the caller treats
+	// it as a soft warning. Used by `flock model unload` and by
+	// `flock up --unload-on-exit`.
+	Unload(ctx context.Context, modelID string) error
 
 	Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
 }

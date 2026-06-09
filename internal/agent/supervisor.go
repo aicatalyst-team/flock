@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -161,6 +162,12 @@ func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
 	spec := p.spec
 	procCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, spec.Command, spec.Args...)
+	// Put the child in its own process group so Stop() can signal the
+	// whole group, killing any grandchildren the process forked.
+	applyProcessGroup(cmd)
+	// On Linux: also ask the kernel to SIGTERM the child if we (the
+	// supervisor) die abnormally. No-op on macOS.
+	applyParentDeathSignal(cmd)
 	if spec.WorkDir != "" {
 		cmd.Dir = spec.WorkDir
 	}
@@ -226,7 +233,14 @@ func (s *Supervisor) Stop(id string) error {
 	if p.cmd.Process == nil {
 		return nil
 	}
-	_ = p.cmd.Process.Signal(os.Interrupt)
+	// Signal the process group rather than just the leader so any
+	// grandchildren the engine forked (download helpers, worker threads
+	// the engine wraps in subprocesses) terminate too. Fall back to a
+	// per-pid signal if the group signal fails (e.g. group already gone).
+	pid := p.cmd.Process.Pid
+	if err := signalGroup(pid, syscall.SIGTERM); err != nil {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+	}
 	done := make(chan struct{})
 	go func() {
 		_ = p.cmd.Wait()
@@ -235,7 +249,9 @@ func (s *Supervisor) Stop(id string) error {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		_ = p.cmd.Process.Kill()
+		if err := signalGroup(pid, syscall.SIGKILL); err != nil {
+			_ = p.cmd.Process.Kill()
+		}
 	}
 	p.mu.Lock()
 	p.Info.Status = "stopped"
