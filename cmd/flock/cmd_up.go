@@ -313,9 +313,24 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println(`      -H 'Content-Type: application/json' \`)
 		fmt.Printf("      -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'\n", cfg.Router.DefaultModel)
 	} else {
-		// Returning user: admin key already on disk, no need to repeat it
-		// or the quick-test curl. Just nudge them at the dashboard.
+		// Returning user: a key already lives in the DB. Re-display it from
+		// ~/.flock/admin.key if we still have it on disk so the operator
+		// doesn't have to dig — that file is where `flock connect` reads
+		// from too. If it's missing (older install, deleted, multi-host),
+		// point at `flock token create` rather than silently dropping the
+		// dashboard/curl hints.
+		saved := readLocalAdminKey(cfg)
 		fmt.Println()
+		if saved != "" {
+			fmt.Printf("  Admin API key (from %s):\n", localAdminKeyPath(cfg))
+			fmt.Printf("    %s\n", saved)
+			fmt.Println()
+		} else {
+			fmt.Printf("  Admin API key:  not saved on this host (%s missing).\n", localAdminKeyPath(cfg))
+			fmt.Println("    →  Mint a new one:  flock token create dashboard --admin")
+			fmt.Println("    →  Old keys can't be recovered (DB stores hashes only).")
+			fmt.Println()
+		}
 		fmt.Println("  Wire up a tool:")
 		fmt.Println("    flock connect claude-code   # or: cursor, aider, continue, …")
 		fmt.Println("    flock connect --list        # see all supported clients")
