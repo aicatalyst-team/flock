@@ -103,9 +103,32 @@ func TestLatencyStats_RingBufferBounded(t *testing.T) {
 		s.record("m1", time.Duration(i)*time.Millisecond)
 	}
 	s.mu.RLock()
-	got := len(s.samples["m1"])
+	rb := s.samples["m1"]
 	s.mu.RUnlock()
+	if rb == nil {
+		t.Fatal("expected ring buffer to be allocated")
+	}
+	got := len(rb.snapshot())
 	if got != 3 {
 		t.Errorf("window=3 should cap samples at 3, got %d", got)
+	}
+}
+
+func TestRingBuf_WrapsAndKeepsOrder(t *testing.T) {
+	rb := newRingBuf(3)
+	for _, ms := range []int{1, 2, 3, 4, 5} {
+		rb.push(time.Duration(ms) * time.Millisecond)
+	}
+	snap := rb.snapshot()
+	if len(snap) != 3 {
+		t.Fatalf("want 3 samples, got %d", len(snap))
+	}
+	// After 5 pushes into a 3-slot ring, expect the last three: 3,4,5
+	// in chronological (oldest-first) order.
+	want := []time.Duration{3 * time.Millisecond, 4 * time.Millisecond, 5 * time.Millisecond}
+	for i, w := range want {
+		if snap[i] != w {
+			t.Errorf("position %d: want %v, got %v", i, w, snap[i])
+		}
 	}
 }

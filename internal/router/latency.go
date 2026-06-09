@@ -20,19 +20,58 @@ type LatencyConfig struct {
 	P95Threshold time.Duration
 }
 
-// latencyStats is a simple bounded ring buffer of observations per model.
-// Concurrent-safe because the router itself spans multiple goroutines.
+// ringBuf is a fixed-capacity ring of latency observations. Both push
+// and snapshot are O(N) only at most once — push is O(1), snapshot
+// allocates and copies the current window in one pass.
+type ringBuf struct {
+	data []time.Duration
+	head int  // next write index
+	full bool // true once the buffer has wrapped
+}
+
+func newRingBuf(n int) *ringBuf {
+	if n <= 0 {
+		n = 50
+	}
+	return &ringBuf{data: make([]time.Duration, n)}
+}
+
+func (r *ringBuf) push(d time.Duration) {
+	r.data[r.head] = d
+	r.head++
+	if r.head >= len(r.data) {
+		r.head = 0
+		r.full = true
+	}
+}
+
+// snapshot returns the current window in chronological order, oldest
+// first. Callers can mutate the result freely.
+func (r *ringBuf) snapshot() []time.Duration {
+	if !r.full {
+		out := make([]time.Duration, r.head)
+		copy(out, r.data[:r.head])
+		return out
+	}
+	out := make([]time.Duration, len(r.data))
+	n := copy(out, r.data[r.head:])
+	copy(out[n:], r.data[:r.head])
+	return out
+}
+
+// latencyStats is a per-model rolling window of observations. Backed by
+// one ring per model so push is O(1) regardless of window size.
 type latencyStats struct {
 	mu      sync.RWMutex
 	cfg     LatencyConfig
-	samples map[string][]time.Duration
+	samples map[string]*ringBuf
 }
 
 func newLatencyStats(cfg LatencyConfig) *latencyStats {
 	if cfg.Window <= 0 {
 		cfg.Window = 50
 	}
-	return &latencyStats{cfg: cfg, samples: map[string][]time.Duration{}}
+	return &latencyStats{cfg: cfg, samples: map[string]*ringBuf{}}
 }
 
 func (s *latencyStats) record(model string, d time.Duration) {
@@ -41,36 +80,37 @@ func (s *latencyStats) record(model string, d time.Duration) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	xs := s.samples[model]
-	if len(xs) >= s.cfg.Window {
-		// Drop oldest. Cheap O(N) for N=50 — not worth a proper ring.
-		copy(xs, xs[1:])
-		xs = xs[:len(xs)-1]
+	rb, ok := s.samples[model]
+	if !ok {
+		rb = newRingBuf(s.cfg.Window)
+		s.samples[model] = rb
 	}
-	xs = append(xs, d)
-	s.samples[model] = xs
+	rb.push(d)
 }
 
 // p95 returns the 95th percentile of the rolling window. Returns 0 if
 // fewer than 5 samples (too small to be meaningful).
 func (s *latencyStats) p95(model string) time.Duration {
 	s.mu.RLock()
-	xs := s.samples[model]
+	rb := s.samples[model]
 	s.mu.RUnlock()
+	if rb == nil {
+		return 0
+	}
+	xs := rb.snapshot()
 	if len(xs) < 5 {
 		return 0
 	}
-	sorted := append([]time.Duration(nil), xs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
 	// 95th percentile by nearest-rank: ceil(0.95 * N) - 1 (0-indexed).
-	idx := (95*len(sorted))/100 - 1
+	idx := (95*len(xs))/100 - 1
 	if idx < 0 {
 		idx = 0
 	}
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
+	if idx >= len(xs) {
+		idx = len(xs) - 1
 	}
-	return sorted[idx]
+	return xs[idx]
 }
 
 // reorderByLatency, given the chain returned by resolveChain, optionally

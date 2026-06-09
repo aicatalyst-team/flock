@@ -304,8 +304,15 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attribute.String("flock.node_id", nodeID),
 		)
 		r.incInflight(nodeID)
-		inner, err := eng.Chat(attemptCtx, attempt)
+		// Derive a cancellable child context for the engine call so the
+		// streaming goroutine can stop the producer cleanly on client
+		// disconnect. Without this, an unresponsive backend would leak
+		// the drain goroutine waiting on an inner channel that never
+		// closes.
+		streamCtx, streamCancel := context.WithCancel(attemptCtx)
+		inner, err := eng.Chat(streamCtx, attempt)
 		if err != nil {
+			streamCancel()
 			r.decInflight(nodeID)
 			attemptSpan.SetStatus(codes.Error, "engine.Chat returned synchronously")
 			attemptSpan.RecordError(err)
@@ -328,6 +335,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		// Capture once for the closure — `candidate` is the loop var.
 		servedModel := candidate
 		go func() {
+			defer streamCancel() // always release engine's ctx
 			defer r.decInflight(nodeID)
 			defer close(out)
 			defer span.End() // duration covers full streamed response
@@ -340,10 +348,8 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				case out <- ev:
 				case <-ctx.Done():
 					span.SetStatus(codes.Error, "client disconnected")
-					go func() {
-						for range inner {
-						}
-					}()
+					streamCancel()
+					go drainWithTimeout(inner, 30*time.Second)
 					return
 				}
 			}
@@ -361,6 +367,26 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	}
 	span.End()
 	return nil, primaryErr
+}
+
+// drainWithTimeout consumes a stream channel for at most `d`, then
+// returns. Used when the client disconnects mid-stream: we cancel the
+// engine context to stop the producer, then drain whatever's already
+// buffered. Without the timeout, a hung backend would leak a goroutine
+// blocked on a receive that never completes.
+func drainWithTimeout[T any](ch <-chan T, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-t.C:
+			return
+		}
+	}
 }
 
 // logFallback emits a stderr line so operators see the fallback in flock up
@@ -413,7 +439,13 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 		return r.local, r.localNode, nil
 	}
 
-	// 3. Pick least-loaded worker
+	// 3. Pick least-loaded worker. The snapshot we sort against is
+	//    consistent under RLock, but the actual inflight increment
+	//    happens in the caller AFTER we return — so two concurrent
+	//    requests can both pick the same "least-loaded" node and
+	//    over-route once before the counter catches up. This is a
+	//    load-balancing imperfection, not a correctness bug, and
+	//    self-corrects on the next request.
 	r.mu.RLock()
 	sort.Slice(workers, func(i, j int) bool {
 		return r.inflight[workers[i].NodeID] < r.inflight[workers[j].NodeID]
