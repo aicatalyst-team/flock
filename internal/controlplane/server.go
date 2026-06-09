@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -184,6 +187,18 @@ func (s *Server) routes() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(ui.IndexHTML)
 	})
+
+	// Localhost-only bootstrap: hand the dashboard the saved admin key
+	// so first-time / returning users don't have to copy it from the
+	// terminal. The endpoint is unauthenticated by design — it's how
+	// you GET the credential in the first place — but it's gated to:
+	//   1. requests from a loopback peer (127.0.0.1 / ::1), AND
+	//   2. requests with no proxy-forwarding headers (otherwise a
+	//      remote attacker could spoof loopback by setting
+	//      X-Forwarded-For: 127.0.0.1 through a misconfigured proxy).
+	// If either check fails we return 404, indistinguishable from
+	// "endpoint doesn't exist."
+	r.Get("/admin/v1/bootstrap-key", s.bootstrapAdminKey)
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
@@ -1089,6 +1104,45 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Target: r.RemoteAddr,
 		})
 	})
+}
+
+// bootstrapAdminKey hands the local dashboard the admin key saved at
+// `<DataDir>/admin.key` so the UI can auto-log-in without making the
+// operator copy it from the terminal. See the route comment in
+// `routes()` for the security model.
+func (s *Server) bootstrapAdminKey(w http.ResponseWriter, r *http.Request) {
+	// Reject any request that has been proxied — RealIP middleware
+	// (above) rewrites RemoteAddr from these headers, so without this
+	// guard a remote attacker behind a misconfigured reverse proxy
+	// could pose as loopback.
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
+		if r.Header.Get(h) != "" {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "admin.key"))
+	if err != nil {
+		// "Not bootstrapped" surfaces as 404 so the UI can render the
+		// CLI-recovery hint instead of mistaking it for a server error.
+		http.NotFound(w, r)
+		return
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"key": key})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

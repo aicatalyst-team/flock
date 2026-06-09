@@ -52,10 +52,19 @@
     <div id="login" class="hidden flex-1 flex items-center justify-center p-6">
       <div class="max-w-md w-full bg-white rounded-lg border border-slate-200 p-6 shadow-sm">
         <h2 class="text-lg font-semibold mb-2">Sign in</h2>
-        <p class="text-sm text-slate-600 mb-4">Paste your admin API key. You can find it in your terminal where <span class="code">flock up</span> was started.</p>
+        <p class="text-sm text-slate-600 mb-4">Paste your admin API key.</p>
         <input id="loginKey" type="password" placeholder="sk-orc-..." class="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
         <button id="loginBtn" class="mt-3 w-full bg-slate-900 text-white py-2 rounded text-sm font-medium hover:bg-slate-800">Continue</button>
         <p id="loginErr" class="hidden mt-2 text-sm text-red-600"></p>
+        <!-- Recovery hint shown when no admin.key exists on the host. -->
+        <div id="loginHint" class="hidden mt-4 text-xs text-slate-600 border-t border-slate-200 pt-4">
+          <p class="mb-2">No admin key found on this host. Run this in the terminal where Flock is started:</p>
+          <div class="flex items-center gap-2">
+            <code id="loginHintCmd" class="flex-1 font-mono bg-slate-100 border border-slate-200 rounded px-2 py-1 text-[11px] break-all">flock token create dashboard --admin</code>
+            <button id="loginHintCopy" class="text-[11px] bg-slate-900 text-white px-2 py-1 rounded hover:bg-slate-700">Copy</button>
+          </div>
+          <p class="mt-2 text-slate-500">The command prints a one-time <span class="code">sk-orc-…</span> key. Paste it above.</p>
+        </div>
       </div>
     </div>
 
@@ -1538,14 +1547,68 @@ function outcomeBadge(s) {
   return `<span class="pill ${cls}">${s}</span>`;
 }
 
-(async () => {
-  if (!API_KEY) { showLogin(); return; }
+// tryBootstrapKey hits the localhost-only /admin/v1/bootstrap-key
+// endpoint that returns the admin key saved at ~/.flock/admin.key.
+// Returns the key string on success, null on 404 (no file / not on
+// loopback / proxied). Anything else (network error) → null too;
+// the login form is always a safe fallback.
+async function tryBootstrapKey() {
   try {
-    await api("/admin/v1/nodes");
-    showApp();
+    const r = await fetch("/admin/v1/bootstrap-key");
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j && j.key) || null;
   } catch {
-    showLogin("Saved key is invalid; please re-enter.");
+    return null;
   }
+}
+
+// Wire up the login-page recovery hint (CLI command + copy button).
+$("#loginHintCopy")?.addEventListener("click", async () => {
+  const cmd = $("#loginHintCmd").textContent.trim();
+  try {
+    await navigator.clipboard.writeText(cmd);
+    toast("Copied — paste in your terminal.", "ok");
+  } catch {
+    toast("Copy failed; select the text manually.", "err");
+  }
+});
+
+(async () => {
+  // 1. Saved key in this browser → try it.
+  if (API_KEY) {
+    try {
+      await api("/admin/v1/nodes");
+      showApp();
+      return;
+    } catch {
+      // fall through to bootstrap / login
+    }
+  }
+
+  // 2. Ask the server (localhost-only) for the admin key on disk.
+  const bootstrapped = await tryBootstrapKey();
+  if (bootstrapped) {
+    API_KEY = bootstrapped;
+    try {
+      await api("/admin/v1/nodes");
+      localStorage.setItem(KEY_STORAGE, API_KEY);
+      showApp();
+      return;
+    } catch {
+      API_KEY = "";
+    }
+  }
+
+  // 3. Fall back to manual login. Show the CLI-recovery hint since
+  //    the server told us no admin.key exists (or we're not on
+  //    loopback). Hide it once the user starts typing a key, so it
+  //    doesn't clutter the form during a normal sign-in.
+  $("#loginHint").classList.remove("hidden");
+  $("#loginKey").addEventListener("input", () => {
+    $("#loginHint").classList.add("hidden");
+  }, { once: true });
+  showLogin(API_KEY ? "Saved key is invalid; please re-enter." : "");
 })();
 </script>
 </body>
