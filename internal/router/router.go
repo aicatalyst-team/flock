@@ -154,9 +154,9 @@ func (r *Router) resolveChain(model string) []string {
 	chain = append(chain, model)
 	chain = append(chain, fb...)
 	// Cap = primary + N fallbacks (so MaxFallbackAttempts=3 means walk
-	// up to 4 candidates total). The legacy behavior (cap=0) is "no cap".
-	if cap := r.maxFallbackAttempts; cap > 0 && len(chain) > cap+1 {
-		chain = chain[:cap+1]
+	// up to 4 candidates total). The legacy behavior (limit=0) is "no cap".
+	if limit := r.maxFallbackAttempts; limit > 0 && len(chain) > limit+1 {
+		chain = chain[:limit+1]
 		metrics.ObserveRouterFallback("chain", "cap-exhausted")
 	}
 	return chain

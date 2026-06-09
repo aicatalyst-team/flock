@@ -167,19 +167,19 @@ func sparkline(vals []int) string {
 	if len(vals) == 0 {
 		return ""
 	}
-	max := 0
+	peak := 0
 	for _, v := range vals {
-		if v > max {
-			max = v
+		if v > peak {
+			peak = v
 		}
 	}
-	if max == 0 {
+	if peak == 0 {
 		return strings.Repeat("·", len(vals))
 	}
 	bars := []rune("▁▂▃▄▅▆▇█")
 	var b strings.Builder
 	for _, v := range vals {
-		idx := int(float64(v) / float64(max) * float64(len(bars)-1))
+		idx := int(float64(v) / float64(peak) * float64(len(bars)-1))
 		if idx < 0 {
 			idx = 0
 		}
