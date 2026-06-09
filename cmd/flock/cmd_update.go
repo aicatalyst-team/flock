@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -345,8 +346,14 @@ func MaybeShowUpdateNotice(w io.Writer) {
 
 	cachePath := updateCheckCachePath()
 	if cached, ok := readCachedLatest(cachePath, 24*time.Hour); ok {
-		printUpdateNoticeIfNewer(w, cached)
-		return
+		// Self-heal: if the cached "latest" is older than what we're
+		// already running (e.g. cache was written before `flock update`
+		// jumped us several patches), discard it and refetch. Otherwise
+		// we'd cheerfully advertise a downgrade for the next 24h.
+		if cmpVersion(normalizeVersion(cached), normalizeVersion("v"+version)) > 0 {
+			printUpdateNoticeIfNewer(w, cached)
+			return
+		}
 	}
 
 	// Cache stale or missing — bounded async fetch.
@@ -413,13 +420,43 @@ func writeCachedLatest(path, latest string) {
 }
 
 func printUpdateNoticeIfNewer(w io.Writer, latest string) {
-	if normalizeVersion("v"+version) == normalizeVersion(latest) {
+	// Only nudge when `latest` is strictly newer than the running binary.
+	// Equality and "behind" both mean no upgrade exists for the user.
+	if cmpVersion(normalizeVersion(latest), normalizeVersion("v"+version)) <= 0 {
 		return
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  ✨  Flock %s is available (you have v%s).\n", latest, version)
 	fmt.Fprintln(w, "      Run `flock update` to upgrade.")
 	fmt.Fprintln(w)
+}
+
+// cmpVersion compares two normalized "vX.Y.Z" strings numerically and
+// returns -1 / 0 / +1. Non-numeric or malformed segments are treated
+// as 0, which is fine for our normalize-then-compare path.
+func cmpVersion(a, b string) int {
+	as := strings.Split(strings.TrimPrefix(a, "v"), ".")
+	bs := strings.Split(strings.TrimPrefix(b, "v"), ".")
+	n := len(as)
+	if len(bs) > n {
+		n = len(bs)
+	}
+	for i := 0; i < n; i++ {
+		var ai, bi int
+		if i < len(as) {
+			ai, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			bi, _ = strconv.Atoi(bs[i])
+		}
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+	}
+	return 0
 }
 
 // normalizeVersion strips leading "v" and trailing "-dev" / "-snapshot" so
