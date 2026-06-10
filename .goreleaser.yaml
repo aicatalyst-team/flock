@@ -137,6 +137,24 @@ release:
 
     - Website: [flockllm.com](https://flockllm.com)
     - Maintainer: [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — `hadi.work.ca@gmail.com`
+  footer: |
+    ---
+
+    **About Flock** — self-hosted LLM gateway for teams. One Go binary
+    behind one URL serves OpenAI- and Anthropic-compatible APIs across a
+    fleet of Macs / Linux boxes running Ollama, vLLM, MLX-LM, or
+    llama.cpp-RPC. Per-user keys, daily quotas, full audit log,
+    sharded-inference orchestration, Prometheus + OTLP observability,
+    embedded admin dashboard. Engine-agnostic. Apache-2.0.
+
+    Searching for an **OpenRouter alternative**, a **LiteLLM alternative**,
+    a **self-hosted Claude Code proxy**, a **multi-machine Ollama**
+    frontend, or a **private inference cluster**? You're in the right
+    place — see the [README](https://github.com/hadihonarvar/flock#also-known-as--search-terms)
+    for the full landing context.
+
+    Full feature inventory: [CHANGELOG.md](https://github.com/hadihonarvar/flock/blob/main/CHANGELOG.md).
+    What's coming next: [ROADMAP.md](https://github.com/hadihonarvar/flock/blob/main/ROADMAP.md).
 
 # Homebrew tap publishing is disabled until the hadihonarvar/homebrew-tap
 # repo exists. To re-enable:

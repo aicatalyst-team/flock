@@ -2,6 +2,12 @@
 
 > **Self-hosted AI for your team. One endpoint. Your hardware.**
 
+[![License](https://img.shields.io/github/license/hadihonarvar/flock?color=blue)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/hadihonarvar/flock)](go.mod)
+[![Release](https://img.shields.io/github/v/release/hadihonarvar/flock?sort=semver)](https://github.com/hadihonarvar/flock/releases/latest)
+[![CI](https://github.com/hadihonarvar/flock/actions/workflows/ci.yml/badge.svg)](https://github.com/hadihonarvar/flock/actions/workflows/ci.yml)
+[![Auto-release](https://github.com/hadihonarvar/flock/actions/workflows/auto-release.yml/badge.svg)](https://github.com/hadihonarvar/flock/actions/workflows/auto-release.yml)
+
 [**flockllm.com**](https://flockllm.com) · [GitHub](https://github.com/hadihonarvar/flock) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
 
 > Flock is the **self-hosted control plane for LLMs**. One Go binary turns your Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user keys, daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the **OpenAI** and **Anthropic** APIs.
@@ -1333,6 +1339,23 @@ Linux + ROCm via vLLM-ROCm is on the roadmap.
 
 **Can I run this on Windows?**
 Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn't a near-term priority.
+
+---
+
+## Also known as / search terms
+
+Flock is a **self-hosted LLM gateway** and **inference router**. If you found this repo searching for an alternative to a hosted service or a frontend for a local engine, the answer is yes:
+
+- **OpenRouter alternative** (self-hosted) — same one-endpoint-for-many-models idea, but on your hardware with your keys.
+- **LiteLLM alternative** (Go binary instead of Python) — same OpenAI + Anthropic protocol shim, plus multi-node routing.
+- **Self-hosted Claude proxy / Claude Code proxy** — point `ANTHROPIC_BASE_URL` at Flock; serve local models or transparently proxy to real Anthropic per request.
+- **Ollama frontend / multi-machine Ollama** — Flock orchestrates several Ollama (or vLLM / MLX-LM / llama.cpp) nodes behind one gateway with auth, quotas, and audit.
+- **Private inference cluster / on-prem LLM gateway** — keep all inference on a trusted LAN or Tailscale; opt in to vendor fallback only when you choose.
+- **Self-hosted Cursor / Aider / Continue backend** — drop-in OpenAI-compatible URL for IDE coding tools.
+- **AI gateway with per-user keys + quotas + audit** for teams of 10-50 spending $30k+/yr on Claude / GPT.
+- **Sharded inference orchestrator** — split a model larger than any single machine across multiple workers via `llama.cpp-RPC`.
+
+Related concepts: local LLM, on-prem AI, private GPT, GGUF, multi-tenant inference, model placement, fallback chain, hybrid local + vendor.
 
 ---
 
