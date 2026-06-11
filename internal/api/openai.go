@@ -70,6 +70,21 @@ type chatRequest struct {
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 	Stop        []string      `json:"stop,omitempty"`
 	User        string        `json:"user,omitempty"`
+	// Flock is the namespaced bag for per-request routing overrides —
+	// fallbacks, retry count, retry backoff. Nested rather than top-level
+	// so we don't risk shadowing future OpenAI fields. Equivalent
+	// `X-Flock-*` headers work too; body wins on conflict.
+	Flock *flockExtras `json:"flock,omitempty"`
+}
+
+// flockExtras is the optional `flock.*` block carried inside an
+// otherwise OpenAI/Anthropic-shaped request. Each field is mirrored by
+// a header for clients that can only inject headers (curl one-liners,
+// proxy-rewrites).
+type flockExtras struct {
+	Fallbacks      []string `json:"fallbacks,omitempty"`
+	NumRetries     int      `json:"num_retries,omitempty"`
+	RetryBackoffMS int      `json:"retry_backoff_ms,omitempty"`
 }
 
 type chatMessage struct {
@@ -164,8 +179,13 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Stream:      true, // we always stream from the engine; aggregate if needed
 	}
 
+	// Per-request routing overrides (flock.fallbacks / flock.num_retries /
+	// flock.retry_backoff_ms in the body or X-Flock-* headers) attach to
+	// the context the router reads.
+	ctx := overridesContext(r, req.Flock, h.Store, requested)
+
 	start := time.Now()
-	stream, err := h.Engine.Chat(r.Context(), engineReq)
+	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
 		recordUsage(r.Context(), h.Store, "openai", requested, nil, time.Since(start), "error")
 		code, msg := classifyEngineError(h.Engine, err)

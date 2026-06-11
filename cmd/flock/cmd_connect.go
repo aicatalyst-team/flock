@@ -16,6 +16,7 @@ func cmdConnect(args []string) {
 		baseURL = fs.String("base-url", "", "Flock base URL to embed in the snippet (default: cfg.ExternalURL or http://localhost:<listen>)")
 		token   = fs.String("token", "", "API key to embed in the snippet (default: $FLOCK_TOKEN, then ~/.flock/admin.key)")
 		model   = fs.String("model", "auto", "model id to suggest in the snippet")
+		retries = fs.Int("retries", 0, "ask the gateway to retry each candidate up to N times (1-5) — emits X-Flock-Num-Retries in the snippet")
 	)
 	help := helpSpec{
 		name:    "connect",
@@ -29,6 +30,7 @@ func cmdConnect(args []string) {
 			"flock connect openai-sdk            # print Python SDK snippet",
 			"flock connect curl                  # print a smoke-test curl",
 			"flock connect cursor --model qwen-coder-14b",
+			"flock connect curl --retries 3            # ask the gateway to retry 3× per candidate",
 			"FLOCK_TOKEN=sk-orc-... flock connect aider",
 		},
 		notes: []string{
@@ -46,6 +48,7 @@ func cmdConnect(args []string) {
 		"-base-url": true, "--base-url": true,
 		"-token": true, "--token": true,
 		"-model": true, "--model": true,
+		"-retries": true, "--retries": true,
 	})
 	_ = fs.Parse(args)
 
@@ -81,6 +84,7 @@ func cmdConnect(args []string) {
 		BaseURL: resolvedURL,
 		Token:   resolvedToken,
 		Model:   *model,
+		Retries: *retries,
 	})
 	if err != nil {
 		die("%v", err)

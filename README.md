@@ -396,6 +396,19 @@ flock token edit k_abc --clear-models                       # back to "any model
 
 - Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
 - Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
+- **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`flock.fallbacks`, `flock.num_retries`, `flock.retry_backoff_ms`) or `X-Flock-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `flock.fallback.source = catalog | request` so operators can see who's overriding policy.
+
+  ```bash
+  curl -s http://localhost:8080/v1/chat/completions \
+    -H "Authorization: Bearer sk-orc-..." \
+    -H "X-Flock-Num-Retries: 3" \
+    -d '{
+      "model": "qwen3-14b",
+      "messages": [{"role":"user","content":"hi"}],
+      "flock": {"fallbacks": ["qwen3-8b", "llama-3.2-3b"], "retry_backoff_ms": 250}
+    }'
+  ```
+
 - **AWS Bedrock**: SigV4 signing for `anthropic.*` models (non-streaming). Streaming body translation for other families pending.
 - **GCP Vertex**: ADC auth probe wired. Body translation for `generateContent` pending.
 

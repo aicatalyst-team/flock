@@ -1,0 +1,139 @@
+// Per-request routing override plumbing — the bridge from
+// (HTTP body | X-Flock-* headers) to router.Overrides on ctx.
+//
+// Shared between the OpenAI and Anthropic handlers so a client can use
+// the same `flock.fallbacks` / `X-Flock-Fallbacks` mechanism regardless
+// of which protocol the rest of the request speaks.
+package api
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/router"
+	"github.com/hadihonarvar/flock/internal/store"
+)
+
+// requestOverrides is the protocol-agnostic shape the body parsers emit.
+// flockExtras (OpenAI) and the Anthropic equivalent both build one of
+// these before handing off to overridesFromRequest, which merges in any
+// X-Flock-* headers and applies caps.
+type requestOverrides struct {
+	Fallbacks      []string
+	NumRetries     int
+	RetryBackoffMS int
+}
+
+// overridesContext extracts overrides from the request body extras +
+// X-Flock-* headers, attaches them to a derived ctx, and records an
+// audit row when the request actually carried overrides (so admins can
+// see who's bypassing the catalog policy).
+//
+// st may be nil — the audit step is best-effort.
+func overridesContext(r *http.Request, body *flockExtras, st store.Store, requestedModel string) context.Context {
+	o := mergeBodyAndHeaders(body, r.Header).Clamp()
+	if !o.IsSet() {
+		return r.Context()
+	}
+	recordOverrideAudit(r.Context(), st, requestedModel, o)
+	return router.WithOverrides(r.Context(), o)
+}
+
+// overridesContextAnthropic mirrors overridesContext but for the
+// Anthropic handler, whose body shape carries the same fields under the
+// same `flock` key.
+func overridesContextAnthropic(r *http.Request, body *flockExtras, st store.Store, requestedModel string) context.Context {
+	return overridesContext(r, body, st, requestedModel)
+}
+
+func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
+	o := router.Overrides{}
+	if body != nil {
+		o.Fallbacks = body.Fallbacks
+		o.NumRetries = body.NumRetries
+		o.RetryBackoffMS = body.RetryBackoffMS
+	}
+	// Headers fill in only when the body left a field zero. Body wins so
+	// a client can be explicit about overriding a proxy-injected header.
+	if len(o.Fallbacks) == 0 {
+		if v := h.Get("X-Flock-Fallbacks"); v != "" {
+			o.Fallbacks = splitAndTrim(v)
+		}
+	}
+	if o.NumRetries == 0 {
+		if v := h.Get("X-Flock-Num-Retries"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				o.NumRetries = n
+			}
+		}
+	}
+	if o.RetryBackoffMS == 0 {
+		if v := h.Get("X-Flock-Retry-Backoff-Ms"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				o.RetryBackoffMS = n
+			}
+		}
+	}
+	return o
+}
+
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func recordOverrideAudit(ctx context.Context, st store.Store, requestedModel string, o router.Overrides) {
+	if st == nil {
+		return
+	}
+	keyID, userID := "", ""
+	if k := auth.KeyFrom(ctx); k != nil {
+		keyID = k.ID
+		userID = k.UserID
+	}
+	meta := overrideAuditMeta(keyID, o)
+	_ = st.Audit().Record(ctx, store.AuditEntry{
+		TS:       time.Now(),
+		Actor:    userID,
+		Action:   "router.override",
+		Target:   requestedModel,
+		Metadata: meta,
+	})
+}
+
+// overrideAuditMeta builds the JSON metadata payload so operators can
+// see what the override actually was (fallbacks list, retry count) from
+// the audit row without grepping logs.
+func overrideAuditMeta(keyID string, o router.Overrides) string {
+	parts := make([]string, 0, 4)
+	if keyID != "" {
+		parts = append(parts, kv("key_id", keyID))
+	}
+	if len(o.Fallbacks) > 0 {
+		parts = append(parts, kv("fallbacks", strings.Join(o.Fallbacks, ",")))
+	}
+	if o.NumRetries > 0 {
+		parts = append(parts, kv("num_retries", strconv.Itoa(o.NumRetries)))
+	}
+	if o.RetryBackoffMS > 0 {
+		parts = append(parts, kv("retry_backoff_ms", strconv.Itoa(o.RetryBackoffMS)))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func kv(k, v string) string {
+	return `"` + k + `":"` + v + `"`
+}

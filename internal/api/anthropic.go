@@ -48,6 +48,10 @@ type anthropicRequest struct {
 	StopSeq     []string           `json:"stop_sequences,omitempty"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
 	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
+	// Flock is the namespaced bag for per-request routing overrides
+	// (fallbacks, retry count, retry backoff). Same shape and semantics
+	// as on the OpenAI handler; `X-Flock-*` headers work too.
+	Flock *flockExtras `json:"flock,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -142,8 +146,11 @@ func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 		Stream:      true,
 	}
 
+	// Per-request overrides (flock.* body block or X-Flock-* headers).
+	ctx := overridesContextAnthropic(r, req.Flock, h.Store, requested)
+
 	start := time.Now()
-	stream, err := h.Engine.Chat(r.Context(), engineReq)
+	stream, err := h.Engine.Chat(ctx, engineReq)
 	if err != nil {
 		recordUsage(r.Context(), h.Store, "anthropic", requested, nil, time.Since(start), "error")
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())

@@ -57,6 +57,12 @@ type ConnectInput struct {
 	BaseURL string // e.g. "http://localhost:8080" (no trailing slash)
 	Token   string // Flock API key, plaintext (sk-orc-…)
 	Model   string // model id to suggest in the snippet; defaults to "auto"
+	// Retries, when > 0, adds an `X-Flock-Num-Retries: N` header to the
+	// rendered snippet so the gateway retries each candidate up to N
+	// times with exponential backoff before walking the fallback chain.
+	// Surfaced in the curl template; clients that don't expose
+	// per-request headers ignore it.
+	Retries int
 }
 
 // ConnectOutput is the rendered snippet plus metadata about the client.
@@ -109,7 +115,8 @@ func ConnectSnippet(in ConnectInput) (*ConnectOutput, error) {
 		BaseURL string
 		Token   string
 		Model   string
-	}{in.BaseURL, in.Token, in.Model}); err != nil {
+		Retries int
+	}{in.BaseURL, in.Token, in.Model, in.Retries}); err != nil {
 		return nil, fmt.Errorf("snippet template render for %q: %w", matched.ID, err)
 	}
 

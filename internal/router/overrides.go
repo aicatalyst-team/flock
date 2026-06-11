@@ -1,0 +1,83 @@
+package router
+
+import "context"
+
+// Overrides carry per-request routing knobs that the OpenAI/Anthropic
+// HTTP handlers extract from `flock.*` body fields or `X-Flock-*`
+// headers. They override the catalog-level fallback chain for that one
+// request only; an unset Overrides value (the zero value) preserves the
+// pre-existing catalog-only behavior.
+//
+// Caps are enforced at parse time so a runaway request can't burn
+// minutes on retries:
+//
+//   - NumRetries     ∈ [0, MaxRetries]
+//   - RetryBackoffMS ∈ [0, RetryBackoffCapMS]
+type Overrides struct {
+	// Fallbacks, when non-empty, replaces the catalog fallback chain
+	// for this request. Chain order is [primary, ...Fallbacks].
+	Fallbacks []string
+
+	// NumRetries, when > 0, retries each candidate up to N additional
+	// times before advancing to the next candidate. Retries apply only
+	// to synchronous Engine.Chat / Engine.Embed errors — once a stream
+	// has started producing events, mid-stream errors propagate as-is.
+	NumRetries int
+
+	// RetryBackoffMS is the initial backoff between retries (ms). The
+	// router doubles it after each failed attempt, capped at
+	// RetryBackoffCapMS. 0 means "retry immediately" — usually you
+	// want at least 100ms.
+	RetryBackoffMS int
+}
+
+// MaxRetries is the upper bound the parsers enforce on
+// `flock.num_retries`. Keeps a misconfigured client from burning a
+// pathological number of retries before failing.
+const MaxRetries = 5
+
+// RetryBackoffCapMS is the ceiling for the doubled backoff between
+// retries — past this, the doubling plateaus.
+const RetryBackoffCapMS = 5000
+
+// IsSet reports whether any override field is non-zero. Cheaper than
+// reflecting and lets callers short-circuit the override path entirely
+// for the (vast) majority of requests that don't customize routing.
+func (o Overrides) IsSet() bool {
+	return len(o.Fallbacks) > 0 || o.NumRetries > 0
+}
+
+// ctxKey is unexported to avoid context-key collisions.
+type ctxKey struct{}
+
+// WithOverrides attaches `o` to `ctx`. Pass the resulting context to
+// Router.Chat / Router.Embed so the router can see the request-level
+// knobs.
+func WithOverrides(ctx context.Context, o Overrides) context.Context {
+	return context.WithValue(ctx, ctxKey{}, o)
+}
+
+// FromContext returns the overrides attached to ctx (zero value if
+// none).
+func FromContext(ctx context.Context) Overrides {
+	v, _ := ctx.Value(ctxKey{}).(Overrides)
+	return v
+}
+
+// Clamp enforces the documented caps. Callers can call this on a value
+// parsed from untrusted client input. Negative values are floored at 0.
+func (o Overrides) Clamp() Overrides {
+	if o.NumRetries < 0 {
+		o.NumRetries = 0
+	}
+	if o.NumRetries > MaxRetries {
+		o.NumRetries = MaxRetries
+	}
+	if o.RetryBackoffMS < 0 {
+		o.RetryBackoffMS = 0
+	}
+	if o.RetryBackoffMS > RetryBackoffCapMS {
+		o.RetryBackoffMS = RetryBackoffCapMS
+	}
+	return o
+}

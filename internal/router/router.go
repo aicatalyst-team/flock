@@ -198,6 +198,11 @@ func (r *Router) Unload(ctx context.Context, modelID string) error {
 // primary model first; on retriable error, walks the fallback chain in
 // order. If every candidate fails, returns the PRIMARY's error since that's
 // what the operator actually asked for.
+//
+// Per-request overrides (router.WithOverrides on the ctx) take precedence
+// over the catalog chain: a non-empty Overrides.Fallbacks replaces the
+// catalog chain entirely, and Overrides.NumRetries wraps each attempt in
+// an exponential-backoff loop before advancing to the next candidate.
 func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
 	ctx, span := tracer.Start(ctx, "router.Embed",
 		trace.WithAttributes(
@@ -206,15 +211,27 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	)
 	defer span.End()
 
-	chain := r.resolveChain(req.Model)
-	if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
-		chain = reordered
+	ov := FromContext(ctx)
+	chain, source := r.chainFor(req.Model, ov)
+	if source == "catalog" {
+		if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
+			chain = reordered
+			span.SetAttributes(
+				attribute.Bool("flock.latency.reordered", true),
+				attribute.String("flock.latency.front", chain[0]),
+			)
+		}
+	}
+	span.SetAttributes(
+		attribute.Int("flock.fallback.chain_length", len(chain)),
+		attribute.String("flock.fallback.source", source),
+	)
+	if ov.NumRetries > 0 {
 		span.SetAttributes(
-			attribute.Bool("flock.latency.reordered", true),
-			attribute.String("flock.latency.front", chain[0]),
+			attribute.Int("flock.retry.num_retries", ov.NumRetries),
+			attribute.Int("flock.retry.backoff_ms", ov.RetryBackoffMS),
 		)
 	}
-	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
 
 	var primaryErr error
 	for i, candidate := range chain {
@@ -255,25 +272,43 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 			}
 			continue
 		}
-		r.incInflight(nodeID)
-		res, err := ee.Embed(attemptCtx, attempt)
-		r.decInflight(nodeID)
-		if err == nil {
-			attemptSpan.SetStatus(codes.Ok, "")
-			attemptSpan.End()
-			if i > 0 {
-				r.logFallback(req.Model, candidate, "embed", primaryErr)
-				span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
+		// Retry loop wraps the single candidate. Each retry produces a
+		// child span so traces show the wall-clock cost cleanly.
+		var lastErr error
+		for retry := 0; retry <= ov.NumRetries; retry++ {
+			if retry > 0 {
+				if err := waitBackoff(attemptCtx, retry, ov.RetryBackoffMS); err != nil {
+					lastErr = err
+					break
+				}
+				metrics.ObserveRouterFallback("embed", "retry")
 			}
-			span.SetAttributes(attribute.String("flock.model.served", candidate))
-			r.latency.record(candidate, time.Since(attemptStart))
-			return res, nil
+			r.incInflight(nodeID)
+			res, err := ee.Embed(attemptCtx, attempt)
+			r.decInflight(nodeID)
+			if err == nil {
+				attemptSpan.SetStatus(codes.Ok, "")
+				attemptSpan.End()
+				if i > 0 {
+					reason := "primary-error"
+					if source == "request" {
+						reason = "per-request"
+					}
+					r.logFallback(req.Model, candidate, "embed", primaryErr)
+					metrics.ObserveRouterFallback("embed", reason)
+					span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
+				}
+				span.SetAttributes(attribute.String("flock.model.served", candidate))
+				r.latency.record(candidate, time.Since(attemptStart))
+				return res, nil
+			}
+			lastErr = err
 		}
 		attemptSpan.SetStatus(codes.Error, "embed failed")
-		attemptSpan.RecordError(err)
+		attemptSpan.RecordError(lastErr)
 		attemptSpan.End()
 		if i == 0 {
-			primaryErr = err
+			primaryErr = lastErr
 		}
 	}
 	span.SetStatus(codes.Error, "all candidates failed")
@@ -281,6 +316,50 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		span.RecordError(primaryErr)
 	}
 	return engines.EmbedResponse{}, primaryErr
+}
+
+// chainFor builds the candidate chain for `model`, accounting for any
+// per-request overrides. The returned `source` is one of:
+//
+//   - "request" — Overrides.Fallbacks was non-empty; catalog fallbacks
+//     are ignored for this request. Surfaced as a span attribute so
+//     operators can tell at-a-trace who's bypassing catalog policy.
+//   - "catalog" — fell through to the catalog-driven resolver (or just
+//     the primary if no resolver / no `fallback:` entry).
+func (r *Router) chainFor(model string, ov Overrides) ([]string, string) {
+	if len(ov.Fallbacks) > 0 {
+		chain := make([]string, 0, len(ov.Fallbacks)+1)
+		chain = append(chain, model)
+		chain = append(chain, ov.Fallbacks...)
+		return chain, "request"
+	}
+	return r.resolveChain(model), "catalog"
+}
+
+// waitBackoff sleeps for the backoff interval before retry attempt `n`.
+// Initial backoff doubles each retry, capped at RetryBackoffCapMS.
+// Respects context cancellation — returns ctx.Err() if the caller went
+// away while we were waiting.
+func waitBackoff(ctx context.Context, retry, initialMS int) error {
+	if initialMS <= 0 {
+		return nil
+	}
+	delay := initialMS
+	for i := 1; i < retry; i++ {
+		delay *= 2
+		if delay > RetryBackoffCapMS {
+			delay = RetryBackoffCapMS
+			break
+		}
+	}
+	t := time.NewTimer(time.Duration(delay) * time.Millisecond)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Chat dispatches a chat request, with optional fallback. Tries the primary
@@ -305,18 +384,29 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// candidate (so its duration covers the full streamed response), or
 	// inline below if every candidate fails synchronously.
 
-	chain := r.resolveChain(req.Model)
-	// Latency-aware reorder: if primary's recent p95 is over the
-	// configured threshold, surface the fastest fallback first. No-op
-	// when the threshold is 0 (the default).
-	if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
-		chain = reordered
+	ov := FromContext(ctx)
+	chain, source := r.chainFor(req.Model, ov)
+	// Latency-aware reorder applies only to the catalog chain — per-request
+	// overrides are operator intent and shouldn't be silently rearranged.
+	if source == "catalog" {
+		if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
+			chain = reordered
+			span.SetAttributes(
+				attribute.Bool("flock.latency.reordered", true),
+				attribute.String("flock.latency.front", chain[0]),
+			)
+		}
+	}
+	span.SetAttributes(
+		attribute.Int("flock.fallback.chain_length", len(chain)),
+		attribute.String("flock.fallback.source", source),
+	)
+	if ov.NumRetries > 0 {
 		span.SetAttributes(
-			attribute.Bool("flock.latency.reordered", true),
-			attribute.String("flock.latency.front", chain[0]),
+			attribute.Int("flock.retry.num_retries", ov.NumRetries),
+			attribute.Int("flock.retry.backoff_ms", ov.RetryBackoffMS),
 		)
 	}
-	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
 
 	var primaryErr error
 	for i, candidate := range chain {
@@ -346,22 +436,46 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attribute.String("flock.engine", eng.Name()),
 			attribute.String("flock.node_id", nodeID),
 		)
-		r.incInflight(nodeID)
-		// Derive a cancellable child context for the engine call so the
-		// streaming goroutine can stop the producer cleanly on client
-		// disconnect. Without this, an unresponsive backend would leak
-		// the drain goroutine waiting on an inner channel that never
-		// closes.
-		streamCtx, streamCancel := context.WithCancel(attemptCtx)
-		inner, err := eng.Chat(streamCtx, attempt)
-		if err != nil {
-			streamCancel()
+
+		// Retry loop wraps the engine.Chat call. Retries only apply to
+		// synchronous start failures (engine couldn't begin the stream).
+		// Once a stream is open, mid-stream errors are NOT retried — the
+		// client has already begun seeing tokens.
+		//
+		// streamCancel is the cancel for the cancellable child context
+		// of the *successful* stream — handed to the goroutine below.
+		// Failed attempts cancel their own child ctx locally so vet (and
+		// future readers) can see no context.CancelFunc leaks across the
+		// loop boundary.
+		var inner <-chan engines.StreamEvent
+		var streamCancel context.CancelFunc
+		var lastErr error
+		for retry := 0; retry <= ov.NumRetries; retry++ {
+			if retry > 0 {
+				if err := waitBackoff(attemptCtx, retry, ov.RetryBackoffMS); err != nil {
+					lastErr = err
+					break
+				}
+				metrics.ObserveRouterFallback("chat", "retry")
+			}
+			r.incInflight(nodeID)
+			thisCtx, thisCancel := context.WithCancel(attemptCtx)
+			s, err := eng.Chat(thisCtx, attempt)
+			if err == nil {
+				inner = s
+				streamCancel = thisCancel
+				break // stream opened — stop retrying
+			}
+			thisCancel()
 			r.decInflight(nodeID)
+			lastErr = err
+		}
+		if inner == nil {
 			attemptSpan.SetStatus(codes.Error, "engine.Chat returned synchronously")
-			attemptSpan.RecordError(err)
+			attemptSpan.RecordError(lastErr)
 			attemptSpan.End()
 			if i == 0 {
-				primaryErr = err
+				primaryErr = lastErr
 			}
 			continue
 		}
@@ -369,7 +483,12 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		attemptSpan.End()
 
 		if i > 0 {
+			reason := "primary-error"
+			if source == "request" {
+				reason = "per-request"
+			}
 			r.logFallback(req.Model, candidate, "chat", primaryErr)
+			metrics.ObserveRouterFallback("chat", reason)
 			span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 		}
 		span.SetAttributes(attribute.String("flock.model.served", candidate))
@@ -434,8 +553,9 @@ func drainWithTimeout[T any](ch <-chan T, d time.Duration) {
 
 // logFallback emits a structured slog event so operators can filter
 // fallback activations by model, fallback target, op, or error class.
-// Also bumps the Prometheus counter so dashboards can chart fallback rate
-// without scraping logs.
+// The metric (`flock_router_fallback_total{op, reason}`) is now bumped
+// by the call site so the reason label can distinguish per-request
+// overrides from catalog-driven fallbacks.
 func (r *Router) logFallback(primary, used, op string, primaryErr error) {
 	if r.log != nil {
 		r.log.Warn("router fallback",
@@ -445,7 +565,6 @@ func (r *Router) logFallback(primary, used, op string, primaryErr error) {
 			"err", primaryErr,
 		)
 	}
-	metrics.ObserveRouterFallback(op, "primary-error")
 }
 
 // pick returns an engine and the node id it represents.
