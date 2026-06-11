@@ -126,10 +126,15 @@ func auditRefusal(ctx context.Context, st store.Store, key *store.APIKey, model 
 	if st == nil {
 		return
 	}
+	meta := ""
+	if rid := RequestIDFrom(ctx); rid != "" {
+		meta = `{"request_id":"` + rid + `"}`
+	}
 	_ = st.Audit().Record(ctx, store.AuditEntry{
-		TS:     time.Now(),
-		Actor:  key.UserID,
-		Action: "model_not_allowed",
-		Target: model,
+		TS:       time.Now(),
+		Actor:    key.UserID,
+		Action:   "model_not_allowed",
+		Target:   model,
+		Metadata: meta,
 	})
 }

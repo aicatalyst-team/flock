@@ -104,7 +104,7 @@ func recordOverrideAudit(ctx context.Context, st store.Store, requestedModel str
 		keyID = k.ID
 		userID = k.UserID
 	}
-	meta := overrideAuditMeta(keyID, o)
+	meta := overrideAuditMetaWithReq(ctx, keyID, o)
 	_ = st.Audit().Record(ctx, store.AuditEntry{
 		TS:       time.Now(),
 		Actor:    userID,
@@ -118,7 +118,31 @@ func recordOverrideAudit(ctx context.Context, st store.Store, requestedModel str
 // see what the override actually was (fallbacks list, retry count) from
 // the audit row without grepping logs.
 func overrideAuditMeta(keyID string, o router.Overrides) string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
+	if keyID != "" {
+		parts = append(parts, kv("key_id", keyID))
+	}
+	if len(o.Fallbacks) > 0 {
+		parts = append(parts, kv("fallbacks", strings.Join(o.Fallbacks, ",")))
+	}
+	if o.NumRetries > 0 {
+		parts = append(parts, kv("num_retries", strconv.Itoa(o.NumRetries)))
+	}
+	if o.RetryBackoffMS > 0 {
+		parts = append(parts, kv("retry_backoff_ms", strconv.Itoa(o.RetryBackoffMS)))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// overrideAuditMetaWithReq is the request-aware variant that prepends
+// the request id so audit rows correlate with x-flock-request-id on the
+// response.
+func overrideAuditMetaWithReq(ctx context.Context, keyID string, o router.Overrides) string {
+	rid := RequestIDFrom(ctx)
+	if rid == "" {
+		return overrideAuditMeta(keyID, o)
+	}
+	parts := []string{kv("request_id", rid)}
 	if keyID != "" {
 		parts = append(parts, kv("key_id", keyID))
 	}

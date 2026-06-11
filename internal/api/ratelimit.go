@@ -62,6 +62,47 @@ func (b *Bucket) Take(n float64) (ok bool, retryAfter time.Duration) {
 	return false, time.Duration(seconds) * time.Second
 }
 
+// Available returns the current token count (after a lazy refill). Used
+// by the rate-limit header writer to populate
+// `x-ratelimit-remaining-*`. nil → +Inf so a key with no limit reports
+// effectively unlimited remaining.
+func (b *Bucket) Available() float64 {
+	if b == nil {
+		return -1
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refill()
+	return b.tokens
+}
+
+// Capacity returns the configured maximum tokens (per-minute limit).
+// Used by the header writer to populate `x-ratelimit-limit-*`.
+func (b *Bucket) Capacity() float64 {
+	if b == nil {
+		return -1
+	}
+	return b.capacity
+}
+
+// RefillETA returns the number of seconds until the bucket is fully
+// refilled from its current level. Used for `x-ratelimit-reset-*`,
+// which clients interpret as "wait this long for the limit to reset".
+// 0 when the bucket is already full.
+func (b *Bucket) RefillETA() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refill()
+	deficit := b.capacity - b.tokens
+	if deficit <= 0 {
+		return 0
+	}
+	return int(math.Ceil(deficit / b.fillRate))
+}
+
 // Refund returns n tokens to the bucket (used after the response when
 // the upfront estimate was too generous). Capped at capacity.
 func (b *Bucket) Refund(n float64) {

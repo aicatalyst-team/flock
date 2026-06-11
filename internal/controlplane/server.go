@@ -241,6 +241,10 @@ func (s *Server) routes() http.Handler {
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		// Stamp a request id + standard rate-limit headers on every
+		// response so client SDKs see throttling status without
+		// special-casing Flock. Runs after auth so the key is known.
+		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
 		// Per-key model allowlist runs BEFORE quota: a key with no quota
 		// to spend on an unauthorized model would otherwise burn a 429
 		// instead of the more accurate 403.

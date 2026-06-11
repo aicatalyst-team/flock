@@ -63,6 +63,7 @@ func writeBudgetExceeded(w http.ResponseWriter, b store.Budget) {
 		retry = 60
 	}
 	w.Header().Set("Retry-After", fmt.Sprintf("%d", retry))
+	w.Header().Set(HeaderBudgetResetAt, formatResetAt(b.ResetAt))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	body := map[string]any{
@@ -84,8 +85,9 @@ func recordBudgetRefusal(r *http.Request, st store.Store, key *store.APIKey, b s
 	if st == nil {
 		return
 	}
-	meta := fmt.Sprintf(`{"key_id":"%s","window":"%s","unit":"%s","current":%.4f,"limit":%.4f}`,
-		key.ID, b.Window, b.LimitUnit, b.CurrentValue, b.LimitValue)
+	rid := RequestIDFrom(r.Context())
+	meta := fmt.Sprintf(`{"request_id":"%s","key_id":"%s","window":"%s","unit":"%s","current":%.4f,"limit":%.4f}`,
+		rid, key.ID, b.Window, b.LimitUnit, b.CurrentValue, b.LimitValue)
 	_ = st.Audit().Record(r.Context(), store.AuditEntry{
 		TS:       time.Now(),
 		Actor:    key.UserID,
