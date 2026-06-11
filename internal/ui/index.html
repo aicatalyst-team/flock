@@ -1538,23 +1538,35 @@ async function renderTokens() {
   const root = $("#view-tokens");
   root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
   try {
-    const keys = (await api("/admin/v1/tokens")) || [];
-    const rows = keys.map((k) => [
+    // Fetch tokens + the catalog in parallel so the create form can offer
+    // a multi-select. Catalog is small (<50 rows) and already cached most
+    // of the session.
+    const [keys, catalog] = await Promise.all([
+      api("/admin/v1/tokens"),
+      api("/admin/v1/catalog").catch(() => []),
+    ]);
+    window.__tokensCatalog = catalog || [];
+
+    const rows = (keys || []).map((k) => [
       `<span class="code">${k.id}</span>`,
       k.name,
       scopeBadge(k.scope),
       k.user_id || "<i class='text-slate-400'>—</i>",
       k.quota_daily_tokens > 0 ? k.quota_daily_tokens.toLocaleString() : "<i class='text-slate-400'>∞</i>",
+      renderAllowedModels(k.allowed_models),
       k.revoked ? `<span class="pill pill-err">revoked</span>` : `<span class="pill pill-ok">active</span>`,
       new Date(k.created_at).toLocaleString(),
-      k.revoked ? "" : `<button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>`,
+      k.revoked ? "" : `<div class="flex gap-2">
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${k.id}', ${JSON.stringify(k.allowed_models || []).replace(/"/g, '&quot;')}, ${k.allowed_models == null})">models…</button>
+        <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>
+      </div>`,
     ]);
     root.innerHTML = `
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">API keys</h2>
         <button onclick="openInviteModal()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">+ Invite teammate</button>
       </div>
-      ${table(["ID", "Name", "Scope", "User", "Daily quota", "Status", "Created", ""], rows)}
+      ${table(["ID", "Name", "Scope", "User", "Daily quota", "Models", "Status", "Created", ""], rows)}
 
       <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
         <strong>Heads-up:</strong> "node" scope tokens become the shared secret a worker uses for BOTH directions of communication. They are stored plaintext on <span class="code">nodes.worker_token</span> and used by the leader to call back into the worker. Only issue them on a trusted network (LAN or Tailscale). See the <a class="underline" href="#" onclick="switchView('settings')">Settings tab</a> for the full security model.
@@ -1581,10 +1593,58 @@ async function renderTokens() {
           </div>
           <button id="tokCreateBtn" onclick="createToken()" class="bg-slate-900 text-white py-1.5 rounded text-sm font-medium">Create</button>
         </div>
+        <div class="mt-3">
+          <label class="text-xs text-slate-500">Allowed models <span class="text-slate-400">(optional — leave blank for any; supports `claude-*` glob)</span></label>
+          <input id="tokAllowed" type="text" placeholder="qwen3-14b, claude-*, gpt-4o-mini" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+        </div>
         <p id="tokMsg" class="hidden mt-2 text-sm"></p>
       </div>`;
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+// renderAllowedModels turns the JSON column value into a column cell.
+// null → "any" (unrestricted); [] → red "deny all" badge; list → chips.
+function renderAllowedModels(allowed) {
+  if (allowed == null) {
+    return `<span class="text-xs text-slate-400">any</span>`;
+  }
+  if (allowed.length === 0) {
+    return `<span class="text-xs text-red-700 bg-red-50 border border-red-200 px-1.5 rounded">deny all</span>`;
+  }
+  return allowed.map((m) =>
+    `<span class="text-xs font-mono bg-slate-100 border border-slate-200 px-1.5 rounded mr-1">${m}</span>`
+  ).join("");
+}
+
+// editTokenAllowlist opens a tiny inline prompt for the allowlist
+// (full modal would be overkill for a comma-separated string). The
+// caller passes the current list so the prompt is pre-filled.
+async function editTokenAllowlist(id, currentList, isUnrestricted) {
+  const current = isUnrestricted ? "" : (currentList || []).join(", ");
+  const help = "Comma-separated model ids. Leave blank to clear the restriction (any model). Type `*` to deny all. Glob suffix supported, e.g. claude-*.";
+  const next = prompt(help, current);
+  if (next === null) return; // cancelled
+  let allowed;
+  const trimmed = next.trim();
+  if (trimmed === "") {
+    allowed = null; // clear restriction
+  } else if (trimmed === "*deny*" || trimmed === "(deny all)") {
+    allowed = [];
+  } else {
+    allowed = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+    if (allowed.length === 0) allowed = null;
+  }
+  try {
+    await api(`/admin/v1/tokens/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ allowed_models: allowed }),
+    });
+    toast(`Updated allowlist for ${id}`, "ok");
+    await renderTokens();
+  } catch (e) {
+    toast(`Update failed: ${e.message}`, "err");
   }
 }
 
@@ -1593,10 +1653,16 @@ async function createToken() {
   const scope = $("#tokScope").value;
   const quota = parseInt($("#tokQuota").value, 10) || 0;
   if (!name) { alert("Name required."); return; }
+  const allowedRaw = ($("#tokAllowed")?.value || "").trim();
+  let allowed = null;
+  if (allowedRaw) {
+    allowed = allowedRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (allowed.length === 0) allowed = null;
+  }
   try {
     const resp = await api("/admin/v1/tokens", {
       method: "POST",
-      body: JSON.stringify({ name, scope, quota_daily_tokens: quota }),
+      body: JSON.stringify({ name, scope, quota_daily_tokens: quota, allowed_models: allowed }),
     });
     showOneTimeModal(
       `Key created: ${resp.name} (${resp.scope})`,
@@ -1604,6 +1670,7 @@ async function createToken() {
       resp.plaintext
     );
     $("#tokName").value = "";
+    if ($("#tokAllowed")) $("#tokAllowed").value = "";
     await renderTokens();
   } catch (e) {
     const m = $("#tokMsg");

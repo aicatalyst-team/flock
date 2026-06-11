@@ -211,6 +211,10 @@ func (s *Server) routes() http.Handler {
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
+		// Per-key model allowlist runs BEFORE quota: a key with no quota
+		// to spend on an unauthorized model would otherwise burn a 429
+		// instead of the more accurate 403.
+		r.Use(api.ModelAllowMiddleware(s.store))
 		r.Use(api.QuotaMiddleware(s.store))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
@@ -251,6 +255,7 @@ func (s *Server) routes() http.Handler {
 			// Tokens
 			r.Get("/tokens", s.listTokens)
 			r.Post("/tokens", s.createToken)
+			r.Patch("/tokens/{id}", s.editToken)
 			r.Delete("/tokens/{id}", s.revokeToken)
 
 			// Observability
@@ -763,6 +768,7 @@ type tokenView struct {
 	Scope            string    `json:"scope"`
 	UserID           string    `json:"user_id"`
 	QuotaDailyTokens int64     `json:"quota_daily_tokens"`
+	AllowedModels    []string  `json:"allowed_models"`
 	Revoked          bool      `json:"revoked"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -778,6 +784,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		out = append(out, tokenView{
 			ID: k.ID, Name: k.Name, Scope: k.Scope, UserID: k.UserID,
 			QuotaDailyTokens: k.QuotaDailyTokens,
+			AllowedModels:    k.AllowedModels,
 			Revoked:          k.Revoked, CreatedAt: k.CreatedAt,
 		})
 	}
@@ -787,10 +794,11 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {
-		Name             string `json:"name"`
-		Scope            string `json:"scope"` // admin | user | node
-		UserID           string `json:"user_id"`
-		QuotaDailyTokens int64  `json:"quota_daily_tokens"`
+		Name             string   `json:"name"`
+		Scope            string   `json:"scope"` // admin | user | node
+		UserID           string   `json:"user_id"`
+		QuotaDailyTokens int64    `json:"quota_daily_tokens"`
+		AllowedModels    []string `json:"allowed_models"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -817,16 +825,64 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec.QuotaDailyTokens = req.QuotaDailyTokens
+	rec.AllowedModels = req.AllowedModels
 	if err := s.store.APIKeys().Create(r.Context(), rec); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":         rec.ID,
-		"name":       rec.Name,
-		"scope":      rec.Scope,
-		"plaintext":  plain, // shown ONCE; caller must save it now
-		"created_at": rec.CreatedAt,
+		"id":             rec.ID,
+		"name":           rec.Name,
+		"scope":          rec.Scope,
+		"allowed_models": rec.AllowedModels,
+		"plaintext":      plain, // shown ONCE; caller must save it now
+		"created_at":     rec.CreatedAt,
+	})
+}
+
+// editToken updates editable fields on an existing token. Today only
+// the allowlist (`allowed_models`) is editable; revoke/delete is handled
+// by DELETE. The body is a partial-update — pass `allowed_models: null`
+// to remove the restriction, `[]` to deny all, or a list to replace.
+func (s *Server) editToken(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "token id required")
+		return
+	}
+	// Use a json.RawMessage so we can tell "field absent" from
+	// "field present and null" — both round-trip to a nil slice in a
+	// plain `[]string` field.
+	var req struct {
+		AllowedModels *json.RawMessage `json:"allowed_models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.AllowedModels == nil {
+		writeJSONError(w, http.StatusBadRequest, "no editable fields in body (try `allowed_models`)")
+		return
+	}
+	raw := string(*req.AllowedModels)
+	var allowed []string // nil = unrestricted
+	if raw != "null" {
+		if err := json.Unmarshal(*req.AllowedModels, &allowed); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "allowed_models must be a list or null")
+			return
+		}
+		if allowed == nil {
+			allowed = []string{} // empty list = deny all
+		}
+	}
+	if err := s.store.APIKeys().UpdateAllowedModels(r.Context(), id, allowed); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":             id,
+		"allowed_models": allowed,
 	})
 }
 

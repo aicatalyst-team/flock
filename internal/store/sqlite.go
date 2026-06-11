@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,6 +32,14 @@ type Store interface {
 // ---- types ----
 
 // APIKey represents a Flock API key. Plain key text is never stored; only Hash.
+//
+// AllowedModels, when non-nil, restricts the key to the listed model ids
+// — requests for any other model are refused with HTTP 403
+// `model_not_allowed`. A nil slice (the default, and the value for keys
+// created before this column existed) means "no restriction". An empty
+// slice means "no model is allowed" — useful for hard-disabling a key
+// without revoking it. Entries support glob suffix wildcards (e.g.
+// `claude-*`, `gpt-*`) so vendor families can be approved in one row.
 type APIKey struct {
 	ID               string
 	Hash             string
@@ -38,6 +47,7 @@ type APIKey struct {
 	Scope            string // "admin" | "user" | "node"
 	UserID           string
 	QuotaDailyTokens int64
+	AllowedModels    []string
 	CreatedAt        time.Time
 	Revoked          bool
 }
@@ -48,6 +58,10 @@ type APIKeyStore interface {
 	GetByID(ctx context.Context, id string) (*APIKey, error)
 	List(ctx context.Context) ([]APIKey, error)
 	Revoke(ctx context.Context, id string) error
+	// UpdateAllowedModels replaces the allowlist for the given key id.
+	// Pass nil for "unrestricted", an empty slice for "deny all", or a
+	// list (each entry may include a `*` suffix wildcard).
+	UpdateAllowedModels(ctx context.Context, id string, allowed []string) error
 }
 
 type Model struct {
@@ -212,6 +226,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     scope               TEXT NOT NULL,
     user_id             TEXT NOT NULL DEFAULT '',
     quota_daily_tokens  INTEGER NOT NULL DEFAULT 0,
+    allowed_models      TEXT,
     created_at          INTEGER NOT NULL,
     revoked             INTEGER NOT NULL DEFAULT 0
 );
@@ -308,7 +323,11 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 	type colMigration struct {
 		table, column, ddl string
 	}
-	migrations := []colMigration{}
+	migrations := []colMigration{
+		// v0.8 — per-key model allowlist. NULL preserves the existing
+		// "any model" behavior for keys created before this column.
+		{table: "api_keys", column: "allowed_models", ddl: `ALTER TABLE api_keys ADD COLUMN allowed_models TEXT`},
+	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
 		if err != nil {
@@ -361,11 +380,15 @@ func appendPragmas(dsn string) string {
 type sqliteAPIKeys struct{ db *sql.DB }
 
 func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, created_at, revoked)
-		 VALUES(?,?,?,?,?,?,?,?)`,
-		k.ID, k.Hash, k.Name, k.Scope, k.UserID, k.QuotaDailyTokens, k.CreatedAt.Unix(), boolToInt(k.Revoked))
+	allowed, err := marshalAllowed(k.AllowedModels)
 	if err != nil {
+		return fmt.Errorf("encode allowed_models: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked)
+		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		k.ID, k.Hash, k.Name, k.Scope, k.UserID, k.QuotaDailyTokens, allowed,
+		k.CreatedAt.Unix(), boolToInt(k.Revoked)); err != nil {
 		return fmt.Errorf("insert api_key: %w", err)
 	}
 	return nil
@@ -373,14 +396,14 @@ func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
 
 func (s *sqliteAPIKeys) GetByHash(ctx context.Context, hash string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
 		 FROM api_keys WHERE hash = ?`, hash)
 	return scanKey(row)
 }
 
 func (s *sqliteAPIKeys) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
 		 FROM api_keys WHERE id = ?`, id)
 	return scanKey(row)
 }
@@ -389,7 +412,8 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 	var k APIKey
 	var ts int64
 	var rev int
-	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &ts, &rev); err != nil {
+	var allowed sql.NullString
+	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &allowed, &ts, &rev); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -397,12 +421,17 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 	}
 	k.CreatedAt = time.Unix(ts, 0)
 	k.Revoked = rev != 0
+	if list, err := unmarshalAllowed(allowed); err != nil {
+		return nil, fmt.Errorf("decode allowed_models: %w", err)
+	} else {
+		k.AllowedModels = list
+	}
 	return &k, nil
 }
 
 func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
 		 FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query api_keys: %w", err)
@@ -413,11 +442,17 @@ func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 		var k APIKey
 		var ts int64
 		var rev int
-		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &ts, &rev); err != nil {
+		var allowed sql.NullString
+		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &allowed, &ts, &rev); err != nil {
 			return nil, fmt.Errorf("scan api_key: %w", err)
 		}
 		k.CreatedAt = time.Unix(ts, 0)
 		k.Revoked = rev != 0
+		if list, err := unmarshalAllowed(allowed); err != nil {
+			return nil, fmt.Errorf("decode allowed_models: %w", err)
+		} else {
+			k.AllowedModels = list
+		}
 		out = append(out, k)
 	}
 	return out, rows.Err()
@@ -429,6 +464,59 @@ func (s *sqliteAPIKeys) Revoke(ctx context.Context, id string) error {
 		return fmt.Errorf("revoke api_key: %w", err)
 	}
 	return nil
+}
+
+func (s *sqliteAPIKeys) UpdateAllowedModels(ctx context.Context, id string, allowed []string) error {
+	encoded, err := marshalAllowed(allowed)
+	if err != nil {
+		return fmt.Errorf("encode allowed_models: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET allowed_models = ? WHERE id = ?`, encoded, id)
+	if err != nil {
+		return fmt.Errorf("update allowed_models: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", id)
+	}
+	return nil
+}
+
+// marshalAllowed encodes the allowlist for storage.
+//
+//   - nil  → SQL NULL ("no restriction") — preserves the pre-allowlist
+//     default for keys created before the column existed.
+//   - []   → "[]" (JSON empty array) → "deny every model". A real string
+//     in the column distinguishes this from the nil case.
+//   - list → "[\"id1\",\"id2\"]" — explicit allowlist.
+func marshalAllowed(list []string) (sql.NullString, error) {
+	if list == nil {
+		return sql.NullString{}, nil
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: string(b), Valid: true}, nil
+}
+
+func unmarshalAllowed(v sql.NullString) ([]string, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+	if v.String == "" {
+		return []string{}, nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(v.String), &list); err != nil {
+		return nil, err
+	}
+	if list == nil {
+		// JSON `null` round-trips to a nil slice, but a stored Valid row
+		// represents "explicit empty" — normalize to []string{} so the
+		// caller sees deny-all rather than unrestricted.
+		return []string{}, nil
+	}
+	return list, nil
 }
 
 // ---- models ----

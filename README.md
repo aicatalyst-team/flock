@@ -379,8 +379,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 - Per-user API keys with revocation and scopes (admin / user / node)
 - Daily token quotas per key with usage metering
+- **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Audit log of every admin mutation
 - OIDC login for the web UI (Google, GitHub, Okta) — **planned**; the UI currently uses a pasted admin key
+
+```bash
+flock token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
+flock token create bob   --models 'claude-*,gpt-*'          # vendor families via glob
+flock token edit k_abc --add-model gpt-4o-mini              # extend
+flock token edit k_abc --remove-model qwen3-14b             # tighten
+flock token edit k_abc --set-models a,b,c                   # replace
+flock token edit k_abc --clear-models                       # back to "any model"
+```
 
 ### Hybrid local + cloud
 

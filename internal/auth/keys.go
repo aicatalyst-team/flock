@@ -175,3 +175,15 @@ func randID() string {
 
 // ErrNoKey is returned when no API key is present in a context that requires one.
 var ErrNoKey = errors.New("no API key in context")
+
+// WithTestKey attaches an APIKey to ctx the way the auth middleware would,
+// so other packages can write integration tests that exercise downstream
+// middleware (model allowlist, quota) without spinning up a real auth
+// round-trip. Production code paths never call this — use Middleware.
+func WithTestKey(ctx context.Context, key *store.APIKey) context.Context {
+	ctx = context.WithValue(ctx, ctxKeyAPIKey, key)
+	if key != nil {
+		ctx = context.WithValue(ctx, ctxKeyScope, key.Scope)
+	}
+	return ctx
+}
