@@ -11,12 +11,23 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 0.875rem; }
     th { background: #f9fafb; font-weight: 600; }
+    /* Subtle row hover — makes scanning a dense table noticeably easier
+       without competing with status-colored cells. */
+    tbody tr:hover { background: #f8fafc; }
     .pill { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; }
     .pill-ok { background: #dcfce7; color: #166534; }
     .pill-warn { background: #fef3c7; color: #92400e; }
     .pill-err { background: #fee2e2; color: #991b1b; }
     .pill-info { background: #dbeafe; color: #1e40af; }
     .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 0.25em; }
+    /* Disabled button state — used by withButtonLoading() while async
+       actions are pending. Pointer cursor → not-allowed signals
+       progress without needing a spinner everywhere. */
+    button[disabled], button.is-loading {
+      opacity: 0.6;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -107,12 +118,195 @@ async function api(path, opts = {}) {
       ...(opts.headers || {}),
     },
   });
+  if (r.status === 401) {
+    // Key was revoked / changed under our feet (or we never had a
+    // valid one). Bounce the user back to login with a clear hint
+    // rather than letting the raw "401: ..." bubble into a toast.
+    localStorage.removeItem(KEY_STORAGE);
+    API_KEY = "";
+    showLogin("Session ended — paste a fresh admin key.");
+    throw new Error("unauthorized");
+  }
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`${r.status}: ${t}`);
   }
   if (r.headers.get("content-type")?.includes("application/json")) return r.json();
   return r.text();
+}
+
+// ─── Modal / dialog helpers ───
+//
+// These replace the native prompt() / confirm() / alert() calls scattered
+// through this file. Native dialogs are jarring (browser chrome, no theming)
+// and don't compose: editTokenRates used to require TWO sequential prompt()
+// calls just to set RPM + TPM. The helpers below render a styled overlay,
+// return a Promise, and support keyboard (Enter to confirm, Esc to cancel).
+//
+//   await flockConfirm({ title, body, confirmLabel, danger })
+//   await flockPrompt({ title, body, value, placeholder, validate })
+//   await flockForm({ title, fields: [{name,label,type,value,placeholder}], confirmLabel })
+//
+// All return null when the user cancels.
+
+function _modal({ title, contentHTML, confirmLabel = "OK", cancelLabel = "Cancel", danger = false, onConfirm }) {
+  return new Promise((resolve) => {
+    // Stack nicely if a previous modal hasn't been removed yet (e.g. a
+    // confirm fired from inside another).
+    const wrap = document.createElement("div");
+    wrap.className = "fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6";
+    const confirmClass = danger
+      ? "bg-red-600 hover:bg-red-700 text-white"
+      : "bg-slate-900 hover:bg-slate-800 text-white";
+    wrap.innerHTML = `
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="flex justify-between items-start mb-3">
+          <div class="text-lg font-semibold">${title}</div>
+          <button type="button" data-act="cancel" class="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+        </div>
+        <div class="text-sm text-slate-700 mb-4">${contentHTML}</div>
+        <div class="flex justify-end gap-2">
+          <button type="button" data-act="cancel" class="px-4 py-1.5 rounded text-sm border border-slate-300 text-slate-700 hover:bg-slate-50">${cancelLabel}</button>
+          <button type="button" data-act="confirm" class="px-4 py-1.5 rounded text-sm ${confirmClass}">${confirmLabel}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+
+    const finish = (val) => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(val);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); finish(null); }
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+        // Let onConfirm() handle the form value extraction.
+        e.preventDefault();
+        Promise.resolve(onConfirm ? onConfirm(wrap) : true).then((v) => finish(v));
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    wrap.addEventListener("click", (e) => {
+      const act = e.target.dataset?.act;
+      if (act === "cancel" || e.target === wrap) return finish(null);
+      if (act === "confirm") {
+        Promise.resolve(onConfirm ? onConfirm(wrap) : true).then((v) => finish(v));
+      }
+    });
+    // Focus the first input or the confirm button.
+    setTimeout(() => {
+      const f = wrap.querySelector("input, textarea, select") || wrap.querySelector('[data-act="confirm"]');
+      if (f) f.focus();
+    }, 0);
+  });
+}
+
+// flockConfirm: yes/no dialog. Resolves true on confirm, false on cancel.
+async function flockConfirm({ title, body, confirmLabel = "Continue", cancelLabel = "Cancel", danger = false }) {
+  const res = await _modal({
+    title,
+    contentHTML: `<div>${body}</div>`,
+    confirmLabel,
+    cancelLabel,
+    danger,
+    onConfirm: () => true,
+  });
+  return res === true;
+}
+
+// flockPrompt: single-input dialog. Resolves to the trimmed string, or
+// null on cancel. `validate(value)` should return null when accepted or
+// a string error message to keep the dialog open.
+async function flockPrompt({ title, body, value = "", placeholder = "", confirmLabel = "Save", danger = false, validate }) {
+  const inputID = "modalInput_" + Math.random().toString(36).slice(2);
+  const contentHTML = `
+    <div>${body || ""}</div>
+    <input id="${inputID}" type="text" value="${(value || "").replace(/"/g, "&quot;")}" placeholder="${placeholder}"
+           class="mt-3 w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />
+    <div id="${inputID}_err" class="hidden mt-2 text-xs text-red-600"></div>`;
+  return _modal({
+    title,
+    contentHTML,
+    confirmLabel,
+    danger,
+    onConfirm: (wrap) => {
+      const el = wrap.querySelector("#" + inputID);
+      const val = (el.value || "").trim();
+      if (validate) {
+        const err = validate(val);
+        if (err) {
+          const errEl = wrap.querySelector("#" + inputID + "_err");
+          errEl.textContent = err;
+          errEl.classList.remove("hidden");
+          return false; // keep open
+        }
+      }
+      return val;
+    },
+  });
+}
+
+// flockForm: multi-field dialog. fields = [{name, label, type, value, placeholder, help}].
+// type is one of: "text", "number", "textarea", "select" (with `options`).
+// Resolves to an object {name: value, ...} or null on cancel.
+async function flockForm({ title, body, fields, confirmLabel = "Save", danger = false }) {
+  const idPrefix = "f_" + Math.random().toString(36).slice(2) + "_";
+  const fieldHTML = fields.map((f) => {
+    const id = idPrefix + f.name;
+    let input;
+    if (f.type === "textarea") {
+      input = `<textarea id="${id}" rows="${f.rows || 2}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono">${f.value || ""}</textarea>`;
+    } else if (f.type === "select") {
+      const opts = (f.options || []).map((o) =>
+        `<option value="${o.value}"${o.value === f.value ? " selected" : ""}>${o.label || o.value}</option>`
+      ).join("");
+      input = `<select id="${id}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">${opts}</select>`;
+    } else {
+      input = `<input id="${id}" type="${f.type || "text"}" value="${f.value ?? ""}" placeholder="${f.placeholder || ""}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />`;
+    }
+    return `
+      <div class="mt-3">
+        <label class="text-xs text-slate-500 block">${f.label}${f.help ? ` <span class="text-slate-400">— ${f.help}</span>` : ""}</label>
+        ${input}
+      </div>`;
+  }).join("");
+  return _modal({
+    title,
+    contentHTML: `${body ? `<div class="mb-1">${body}</div>` : ""}${fieldHTML}`,
+    confirmLabel,
+    danger,
+    onConfirm: (wrap) => {
+      const out = {};
+      for (const f of fields) {
+        const el = wrap.querySelector("#" + idPrefix + f.name);
+        let v = el.value;
+        if (f.type === "number") v = parseInt(v, 10);
+        out[f.name] = v;
+      }
+      return out;
+    },
+  });
+}
+
+// withButtonLoading swaps a button to a "loading…" state while an async
+// action is running. Restores the original label + enabled state on
+// completion (or failure). Use as:
+//
+//   await withButtonLoading(btn, async () => { await doThing(); });
+//
+// The disabled flag goes through CSS (.is-loading) so the button can't
+// be re-clicked mid-flight, and the user gets visible feedback.
+async function withButtonLoading(btn, fn) {
+  if (!btn) return fn();
+  const original = btn.innerHTML;
+  btn.classList.add("is-loading");
+  btn.innerHTML = `<span class="inline-block animate-pulse">…</span>`;
+  try {
+    return await fn();
+  } finally {
+    btn.classList.remove("is-loading");
+    btn.innerHTML = original;
+  }
 }
 
 function showLogin(err) {
@@ -585,7 +779,7 @@ async function copySnippet() {
       btn.classList.remove("bg-emerald-300");
     }, 1500);
   } catch (e) {
-    alert("Copy failed: " + e.message);
+    toast("Copy failed: " + e.message, "err");
   }
 }
 
@@ -760,7 +954,7 @@ function pgImageClear() {
 async function pgEmbed() {
   const model = $("#pgEmbedModel").value;
   const input = $("#pgEmbedInput").value.trim();
-  if (!input) { alert("Type something to embed."); return; }
+  if (!input) { toast("Type something to embed.", "err"); $("#pgEmbedInput").focus(); return; }
   const wrap = $("#pgEmbedResult");
   const status = $("#pgEmbedStatus");
   const pre = $("#pgEmbedPre");
@@ -797,7 +991,7 @@ async function pgSend() {
   const model = $("#pgModel").value;
   const system = $("#pgSystem").value.trim();
   const user = $("#pgUser").value.trim();
-  if (!user) { alert("Type a message first."); return; }
+  if (!user) { toast("Type a message first.", "err"); $("#pgUser").focus(); return; }
   const maxTokens = parseInt($("#pgMaxTokens").value, 10) || 256;
   const temp = parseFloat($("#pgTemp").value) || 0.7;
 
@@ -938,7 +1132,12 @@ async function renderNodes() {
 }
 
 async function drainNode(id) {
-  if (!confirm(`Mark ${id} as draining? Existing requests will finish; no new requests will route to it.`)) return;
+  const ok = await flockConfirm({
+    title: `Drain ${id}?`,
+    body: `Existing requests on this worker will finish, but no new requests will route to it. Use this before pulling power or doing maintenance.`,
+    confirmLabel: "Drain",
+  });
+  if (!ok) return;
   try {
     await api(`/admin/v1/nodes/${encodeURIComponent(id)}/drain`, { method: "POST" });
     toast(`Draining ${id}`, "ok");
@@ -949,7 +1148,13 @@ async function drainNode(id) {
 }
 
 async function removeNode(id) {
-  if (!confirm(`Permanently remove ${id} from the cluster? The worker will keep running but the leader will forget it.`)) return;
+  const ok = await flockConfirm({
+    title: `Remove ${id} from the cluster?`,
+    body: `The worker process keeps running but the leader will forget it. It can rejoin with a fresh <code>--node</code> token if needed.`,
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api(`/admin/v1/nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
     toast(`Removed ${id}`, "ok");
@@ -960,7 +1165,13 @@ async function removeNode(id) {
 }
 
 async function addNodeWizard() {
-  const name = prompt("Name for the new worker's join token (used for audit only):", "worker-" + Date.now().toString(36));
+  const name = await flockPrompt({
+    title: "Issue a worker join token",
+    body: "Pick a name — used for audit only. The token printed afterward is what the worker presents on first heartbeat.",
+    value: "worker-" + Date.now().toString(36),
+    placeholder: "worker-1",
+    confirmLabel: "Create token",
+  });
   if (!name) return;
   try {
     const resp = await api("/admin/v1/tokens", {
@@ -1225,24 +1436,27 @@ async function renderModels() {
       ];
     });
     root.innerHTML = `
+      <!-- Install actions sit at the top: a user landing on Models
+           usually came here to install something, not to admire what's
+           already running. -->
+      <div class="bg-white border border-slate-200 rounded mb-4">
+        <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+          <div class="text-sm font-semibold">Install a custom model</div>
+          <input id="customModelInput" type="text"
+                 placeholder="hf:owner/repo · ollama:tag · file:/abs/path.gguf"
+                 class="flex-1 min-w-[280px] border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                 onkeydown="if(event.key==='Enter')addCustomModel()" />
+          <button id="customModelBtn" onclick="withButtonLoading(this, addCustomModel)"
+                  class="bg-slate-900 text-white px-3 py-1.5 rounded text-sm hover:bg-slate-800">Install</button>
+          <p class="text-xs text-slate-500 w-full">Skips the curated catalog. Anything the configured engine can pull works here. For curated entries, scroll to the Catalog browser below.</p>
+        </div>
+      </div>
+
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">Installed models</h2>
         <p class="text-xs text-slate-500">License badge: <span class="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 rounded text-xs font-mono">permissive</span> · <span class="text-amber-700 bg-amber-50 border border-amber-200 px-1.5 rounded text-xs font-mono">check terms</span></p>
       </div>
       ${table(["ID", "Status", "License", "Released", "Source", "Size", "Installed", ""], installedRows)}
-
-      <div class="bg-white border border-slate-200 rounded mt-6">
-        <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
-          <div class="text-sm font-semibold">Add custom model</div>
-          <input id="customModelInput" type="text"
-                 placeholder="hf:owner/repo · ollama:tag · file:/abs/path.gguf"
-                 class="flex-1 min-w-[280px] border border-slate-300 rounded px-2 py-1 text-sm font-mono"
-                 onkeydown="if(event.key==='Enter')addCustomModel()" />
-          <button onclick="addCustomModel()"
-                  class="bg-slate-900 text-white px-3 py-1 rounded text-sm hover:bg-slate-800">Install</button>
-          <p class="text-xs text-slate-500 w-full">Skips the curated catalog. Anything the configured engine can pull works here.</p>
-        </div>
-      </div>
 
       <div class="bg-white border border-slate-200 rounded mt-6">
         <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
@@ -1361,7 +1575,13 @@ async function addCustomModel() {
 }
 
 async function removeModel(id) {
-  if (!confirm(`Remove model ${id}? This deletes weights from the local engine (for non-sharded models) or tears down all shards (for sharded models).`)) return;
+  const ok = await flockConfirm({
+    title: `Remove ${id}?`,
+    body: `This deletes the weights from the local engine (non-sharded) or tears down every shard (sharded). The catalog entry stays; you can reinstall later with <code>flock model add ${id}</code>.`,
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api(`/admin/v1/models/${encodeURIComponent(id)}`, { method: "DELETE" });
     toast(`Removed ${id}`, "ok");
@@ -1531,12 +1751,19 @@ async function createSharded() {
 }
 
 async function removeSharded(modelID) {
-  if (!confirm(`Tear down sharded model ${modelID}? This stops the coordinator and every rpc-server worker.`)) return;
+  const ok = await flockConfirm({
+    title: `Tear down sharded ${modelID}?`,
+    body: `Stops the coordinator and every rpc-server worker. Weights remain on disk on each shard host; the model can be rebuilt with <code>flock shard create ${modelID}</code>.`,
+    confirmLabel: "Tear down",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api(`/admin/v1/shards/${encodeURIComponent(modelID)}`, { method: "DELETE" });
+    toast(`Torn down ${modelID}`, "ok");
     await renderShards();
   } catch (e) {
-    alert(`Remove failed: ${e.message}`);
+    toast(`Remove failed: ${e.message}`, "err");
   }
 }
 
@@ -1605,7 +1832,7 @@ async function renderTokens() {
             <label class="text-xs text-slate-500">Daily quota (tokens, 0=∞)</label>
             <input id="tokQuota" type="number" value="0" min="0" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
           </div>
-          <button id="tokCreateBtn" onclick="createToken()" class="bg-slate-900 text-white py-1.5 rounded text-sm font-medium">Create</button>
+          <button id="tokCreateBtn" onclick="withButtonLoading(this, createToken)" class="bg-slate-900 text-white py-1.5 rounded text-sm font-medium hover:bg-slate-800">Create</button>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
           <div>
@@ -1635,24 +1862,28 @@ function renderRateLimit(n, kind) {
   return `<span class="text-xs font-mono">${n.toLocaleString()}</span>`;
 }
 
-// editTokenRates opens a tiny inline editor for the RPM/TPM ceilings.
-// 0 = unlimited; non-negative integer; PATCH applies both atomically
-// so a partial response can't leave one bucket dangling.
+// editTokenRates opens a single styled modal with both RPM and TPM
+// inputs. Replaces a worse-of-both-worlds pair of sequential prompt()
+// dialogs the user had to click through.
 async function editTokenRates(id, currentRPM, currentTPM) {
-  const rpmStr = prompt(`Requests per minute for ${id} (0 = unlimited)`, String(currentRPM || 0));
-  if (rpmStr === null) return;
-  const tpmStr = prompt(`Tokens per minute for ${id} (0 = unlimited)`, String(currentTPM || 0));
-  if (tpmStr === null) return;
-  const rpm = parseInt(rpmStr, 10);
-  const tpm = parseInt(tpmStr, 10);
-  if (Number.isNaN(rpm) || rpm < 0 || Number.isNaN(tpm) || tpm < 0) {
+  const out = await flockForm({
+    title: `Rate limits — ${id}`,
+    body: `Set the per-minute ceilings for this key. 0 means unlimited. Buckets reset on leader restart.`,
+    confirmLabel: "Save",
+    fields: [
+      { name: "rpm", label: "Requests per minute", type: "number", value: currentRPM || 0 },
+      { name: "tpm", label: "Tokens per minute",   type: "number", value: currentTPM || 0 },
+    ],
+  });
+  if (!out) return;
+  if (Number.isNaN(out.rpm) || out.rpm < 0 || Number.isNaN(out.tpm) || out.tpm < 0) {
     toast("RPM/TPM must be non-negative integers", "err");
     return;
   }
   try {
     await api(`/admin/v1/tokens/${encodeURIComponent(id)}`, {
       method: "PATCH",
-      body: JSON.stringify({ rpm_limit: rpm, tpm_limit: tpm }),
+      body: JSON.stringify({ rpm_limit: out.rpm, tpm_limit: out.tpm }),
     });
     toast(`Updated rate limits for ${id}`, "ok");
     await renderTokens();
@@ -1675,22 +1906,25 @@ function renderAllowedModels(allowed) {
   ).join("");
 }
 
-// editTokenAllowlist opens a tiny inline prompt for the allowlist
-// (full modal would be overkill for a comma-separated string). The
-// caller passes the current list so the prompt is pre-filled.
+// editTokenAllowlist opens a styled prompt for the allowlist. The
+// caller passes the current list so the input is pre-filled.
 async function editTokenAllowlist(id, currentList, isUnrestricted) {
   const current = isUnrestricted ? "" : (currentList || []).join(", ");
-  const help = "Comma-separated model ids. Leave blank to clear the restriction (any model). Type `*` to deny all. Glob suffix supported, e.g. claude-*.";
-  const next = prompt(help, current);
-  if (next === null) return; // cancelled
+  const next = await flockPrompt({
+    title: `Allowed models — ${id}`,
+    body: "Comma-separated model ids. Leave blank to clear the restriction (any model). Glob suffix supported (e.g. <code>claude-*</code>). Type <code>(deny all)</code> to lock the key without revoking it.",
+    value: current,
+    placeholder: "qwen3-14b, claude-*, gpt-4o-mini",
+    confirmLabel: "Save",
+  });
+  if (next === null) return;
   let allowed;
-  const trimmed = next.trim();
-  if (trimmed === "") {
+  if (next === "") {
     allowed = null; // clear restriction
-  } else if (trimmed === "*deny*" || trimmed === "(deny all)") {
+  } else if (next === "*deny*" || next === "(deny all)") {
     allowed = [];
   } else {
-    allowed = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+    allowed = next.split(",").map((s) => s.trim()).filter(Boolean);
     if (allowed.length === 0) allowed = null;
   }
   try {
@@ -1711,7 +1945,7 @@ async function createToken() {
   const quota = parseInt($("#tokQuota").value, 10) || 0;
   const rpm = parseInt($("#tokRPM")?.value, 10) || 0;
   const tpm = parseInt($("#tokTPM")?.value, 10) || 0;
-  if (!name) { alert("Name required."); return; }
+  if (!name) { toast("Name required.", "err"); $("#tokName").focus(); return; }
   const allowedRaw = ($("#tokAllowed")?.value || "").trim();
   let allowed = null;
   if (allowedRaw) {
@@ -1748,12 +1982,19 @@ async function createToken() {
 }
 
 async function revokeToken(id) {
-  if (!confirm(`Revoke ${id}? Existing sessions using it will start returning 401.`)) return;
+  const ok = await flockConfirm({
+    title: "Revoke API key?",
+    body: `Existing sessions using <code>${id}</code> will start returning <code>401 Unauthorized</code> on their next call. This cannot be undone — issue a new key if needed.`,
+    confirmLabel: "Revoke",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api(`/admin/v1/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast(`Revoked ${id}`, "ok");
     await renderTokens();
   } catch (e) {
-    alert("Revoke failed: " + e.message);
+    toast("Revoke failed: " + e.message, "err");
   }
 }
 
@@ -1871,18 +2112,61 @@ async function renderAudit() {
   try {
     const es = (await api("/admin/v1/audit/recent")) || [];
     root.dataset.loaded = "1";
-    const rows = es.map((e) => [
-      new Date(e.TS).toLocaleString(),
-      e.Actor,
-      e.Action,
-      e.Target,
-    ]);
+    // Cache the rows on the root so the filter input can re-render
+    // without a refetch.
+    window.__auditRows = es;
     root.innerHTML = `
-      <h2 class="text-lg font-semibold mb-3">Audit log</h2>
-      ${table(["Time", "Actor", "Action", "Target"], rows)}`;
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h2 class="text-lg font-semibold">Audit log</h2>
+        <div class="flex items-center gap-2 text-xs">
+          <input id="auditFilter" type="text" placeholder="filter by actor, action, target…"
+                 oninput="renderAuditRows()"
+                 class="border border-slate-300 rounded px-2 py-1 text-sm w-72" />
+          <select id="auditAction" onchange="renderAuditRows()" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="">all actions</option>
+          </select>
+        </div>
+      </div>
+      <div id="auditHost"></div>`;
+    // Populate the action dropdown from observed actions.
+    const actions = [...new Set(es.map((e) => e.Action))].sort();
+    const sel = $("#auditAction");
+    for (const a of actions) {
+      const opt = document.createElement("option");
+      opt.value = a; opt.textContent = a;
+      sel.appendChild(opt);
+    }
+    renderAuditRows();
   } catch (err) {
     root.innerHTML = `<div class="text-sm text-red-600">${err.message}</div>`;
   }
+}
+
+// renderAuditRows redraws the table body from the cached fetch + the
+// current filter inputs, so typing into the filter feels instant
+// without a network round-trip.
+function renderAuditRows() {
+  const host = $("#auditHost");
+  if (!host) return;
+  const q = ($("#auditFilter")?.value || "").toLowerCase();
+  const action = $("#auditAction")?.value || "";
+  const es = (window.__auditRows || []).filter((e) => {
+    if (action && e.Action !== action) return false;
+    if (!q) return true;
+    const hay = (e.Actor + " " + e.Action + " " + e.Target + " " + (e.Metadata || "")).toLowerCase();
+    return hay.includes(q);
+  });
+  if (es.length === 0) {
+    host.innerHTML = `<div class="text-xs text-slate-500">No matching audit entries.</div>`;
+    return;
+  }
+  const rows = es.map((e) => [
+    new Date(e.TS).toLocaleString(),
+    e.Actor || `<span class="text-slate-400">—</span>`,
+    `<span class="code">${e.Action}</span>`,
+    e.Target || `<span class="text-slate-400">—</span>`,
+  ]);
+  host.innerHTML = table(["Time", "Actor", "Action", "Target"], rows);
 }
 
 async function renderSettings() {
