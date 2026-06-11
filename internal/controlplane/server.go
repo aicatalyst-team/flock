@@ -249,6 +249,11 @@ func (s *Server) routes() http.Handler {
 		// runaway client gets the more-actionable 429 with Retry-After
 		// instead of the daily 429.
 		r.Use(api.RateLimitMiddleware(s.rateBuckets))
+		// Monthly + dollar budgets — refuse if any budget for this
+		// key is at or above its limit. Runs before the legacy
+		// daily-quota check (which is now a single-budget special
+		// case the new system subsumes).
+		r.Use(api.BudgetMiddleware(s.store))
 		r.Use(api.QuotaMiddleware(s.store))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
@@ -291,6 +296,9 @@ func (s *Server) routes() http.Handler {
 			r.Post("/tokens", s.createToken)
 			r.Patch("/tokens/{id}", s.editToken)
 			r.Delete("/tokens/{id}", s.revokeToken)
+			r.Get("/tokens/{id}/budgets", s.listBudgets)
+			r.Post("/tokens/{id}/budgets", s.createBudget)
+			r.Delete("/tokens/{id}/budgets/{bid}", s.deleteBudget)
 
 			// Observability
 			r.Get("/usage/recent", s.listUsageRecent)
@@ -970,6 +978,89 @@ func (s *Server) editToken(w http.ResponseWriter, r *http.Request) {
 		resp["tpm_limit"] = tpm
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// listBudgets returns every budget currently attached to the given
+// API key id. Lazily rolls expired windows before reading so the
+// dashboard sees fresh current_value / reset_at fields.
+func (s *Server) listBudgets(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	_ = s.store.Budgets().ResetExpired(r.Context(), id, time.Now())
+	bs, err := s.store.Budgets().ListByKey(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if bs == nil {
+		bs = []store.Budget{}
+	}
+	writeJSON(w, http.StatusOK, bs)
+}
+
+// createBudget attaches a new spend/token budget to an API key.
+//
+//	POST /admin/v1/tokens/{id}/budgets
+//	  { "window": "day|week|month", "limit_unit": "tokens|usd", "limit_value": 100 }
+func (s *Server) createBudget(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "token id required")
+		return
+	}
+	var req struct {
+		Window     string  `json:"window"`
+		LimitUnit  string  `json:"limit_unit"`
+		LimitValue float64 `json:"limit_value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	switch req.Window {
+	case "day", "week", "month":
+	default:
+		writeJSONError(w, http.StatusBadRequest, "window must be day|week|month")
+		return
+	}
+	switch req.LimitUnit {
+	case "tokens", "usd":
+	default:
+		writeJSONError(w, http.StatusBadRequest, "limit_unit must be tokens|usd")
+		return
+	}
+	if req.LimitValue <= 0 {
+		writeJSONError(w, http.StatusBadRequest, "limit_value must be > 0")
+		return
+	}
+	b := store.Budget{
+		APIKeyID:   id,
+		Window:     req.Window,
+		LimitUnit:  req.LimitUnit,
+		LimitValue: req.LimitValue,
+	}
+	bid, err := s.store.Budgets().Create(r.Context(), b)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	b.ID = bid
+	b.ResetAt = store.NextBudgetReset(b.Window, time.Now())
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (s *Server) deleteBudget(w http.ResponseWriter, r *http.Request) {
+	bidStr := chi.URLParam(r, "bid")
+	bid, err := strconv.ParseInt(bidStr, 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid budget id")
+		return
+	}
+	if err := s.store.Budgets().Delete(r.Context(), bid); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "id": bid})
 }
 
 func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {

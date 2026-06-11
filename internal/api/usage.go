@@ -121,6 +121,14 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		_ = err
 	}
 
+	// Bump the per-key budgets for the actual cost and token count.
+	// Best-effort: a write failure here is logged but doesn't surface
+	// to the caller. The pre-check on the next request will reject
+	// once the running total catches up.
+	if keyID != "" {
+		incrementBudgetsAfterUsage(ctx, st, keyID, int64(prompt+completion), cost)
+	}
+
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
 	// upfront estimate; once the real usage is known we either refund
 	// (over-estimated) or deduct the delta (under-estimated). The

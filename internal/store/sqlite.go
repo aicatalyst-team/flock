@@ -26,6 +26,7 @@ type Store interface {
 	Shards() ShardStore
 	Usage() UsageStore
 	Audit() AuditStore
+	Budgets() BudgetStore
 	Close() error
 }
 
@@ -185,6 +186,42 @@ type Usage struct {
 	CostUSD          float64
 }
 
+// Budget is one rolling spend / token allowance attached to an API key.
+// Multiple budgets can apply to a single key — every request must clear
+// all of them to be admitted. Two simultaneously-valid configurations:
+//
+//   - tokens / day  (e.g. 1M tokens/day)
+//   - usd / month   (e.g. $100/month)
+//
+// CurrentValue accumulates as requests run (incremented from the
+// recordUsage path); a request is refused when CurrentValue >=
+// LimitValue. ResetAt is the unix timestamp at which the window
+// rolls — checked lazily on every read so we don't need a cron.
+type Budget struct {
+	ID           int64
+	APIKeyID     string
+	Window       string // "day" | "week" | "month"
+	LimitUnit    string // "tokens" | "usd"
+	LimitValue   float64
+	CurrentValue float64
+	ResetAt      time.Time
+	CreatedAt    time.Time
+}
+
+// BudgetStore is the persistence surface for per-key budgets.
+type BudgetStore interface {
+	Create(ctx context.Context, b Budget) (int64, error)
+	ListByKey(ctx context.Context, apiKeyID string) ([]Budget, error)
+	Delete(ctx context.Context, id int64) error
+	// Increment atomically adds delta to a single budget. Used from
+	// recordUsage after the response is known.
+	Increment(ctx context.Context, id int64, delta float64) error
+	// ResetExpired rolls every budget whose reset_at has passed:
+	// current_value = 0, reset_at = next boundary. Called from the
+	// middleware so admission decisions always see fresh state.
+	ResetExpired(ctx context.Context, apiKeyID string, now time.Time) error
+}
+
 type UsageStore interface {
 	Record(ctx context.Context, u Usage) error
 	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
@@ -280,6 +317,7 @@ func (s *sqliteStore) Placements() PlacementStore { return &sqlitePlacements{db:
 func (s *sqliteStore) Shards() ShardStore         { return &sqliteShards{db: s.db} }
 func (s *sqliteStore) Usage() UsageStore          { return &sqliteUsage{db: s.db} }
 func (s *sqliteStore) Audit() AuditStore          { return &sqliteAudit{db: s.db} }
+func (s *sqliteStore) Budgets() BudgetStore       { return &sqliteBudgets{db: s.db} }
 func (s *sqliteStore) Close() error               { return s.db.Close() }
 
 const schema = `
@@ -360,6 +398,18 @@ CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
 CREATE INDEX IF NOT EXISTS idx_usage_model_ts ON usage(model, ts);
+
+CREATE TABLE IF NOT EXISTS budgets (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_key_id     TEXT    NOT NULL,
+    window         TEXT    NOT NULL,                -- 'day' | 'week' | 'month'
+    limit_unit     TEXT    NOT NULL,                -- 'tokens' | 'usd'
+    limit_value    REAL    NOT NULL,
+    current_value  REAL    NOT NULL DEFAULT 0,
+    reset_at       INTEGER NOT NULL,
+    created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_budgets_key ON budgets(api_key_id);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1124,4 +1174,137 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ---- budgets ----
+
+type sqliteBudgets struct{ db *sql.DB }
+
+func (s *sqliteBudgets) Create(ctx context.Context, b Budget) (int64, error) {
+	if b.ResetAt.IsZero() {
+		b.ResetAt = NextBudgetReset(b.Window, time.Now())
+	}
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now()
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO budgets(api_key_id, window, limit_unit, limit_value, current_value, reset_at, created_at)
+		 VALUES(?,?,?,?,?,?,?)`,
+		b.APIKeyID, b.Window, b.LimitUnit, b.LimitValue, b.CurrentValue,
+		b.ResetAt.Unix(), b.CreatedAt.Unix())
+	if err != nil {
+		return 0, fmt.Errorf("insert budget: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+func (s *sqliteBudgets) ListByKey(ctx context.Context, apiKeyID string) ([]Budget, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, api_key_id, window, limit_unit, limit_value, current_value, reset_at, created_at
+		 FROM budgets WHERE api_key_id = ? ORDER BY id`, apiKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("query budgets: %w", err)
+	}
+	defer rows.Close()
+	var out []Budget
+	for rows.Next() {
+		var b Budget
+		var resetAt, createdAt int64
+		if err := rows.Scan(&b.ID, &b.APIKeyID, &b.Window, &b.LimitUnit, &b.LimitValue,
+			&b.CurrentValue, &resetAt, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan budget: %w", err)
+		}
+		b.ResetAt = time.Unix(resetAt, 0)
+		b.CreatedAt = time.Unix(createdAt, 0)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteBudgets) Delete(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM budgets WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete budget: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteBudgets) Increment(ctx context.Context, id int64, delta float64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE budgets SET current_value = current_value + ? WHERE id = ?`,
+		delta, id)
+	if err != nil {
+		return fmt.Errorf("increment budget: %w", err)
+	}
+	return nil
+}
+
+// ResetExpired walks every budget for this key and, if its reset_at is
+// in the past, zeroes current_value and advances reset_at to the next
+// window boundary. The lazy-on-read pattern keeps us out of cron
+// territory — fresh state is observed on the very next admission
+// check, however long the leader was offline.
+func (s *sqliteBudgets) ResetExpired(ctx context.Context, apiKeyID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, window, reset_at FROM budgets WHERE api_key_id = ? AND reset_at <= ?`,
+		apiKeyID, now.Unix())
+	if err != nil {
+		return fmt.Errorf("scan expired budgets: %w", err)
+	}
+	type expiry struct {
+		ID     int64
+		Window string
+	}
+	var toReset []expiry
+	for rows.Next() {
+		var e expiry
+		var ts int64
+		if err := rows.Scan(&e.ID, &e.Window, &ts); err != nil {
+			rows.Close()
+			return err
+		}
+		toReset = append(toReset, e)
+	}
+	rows.Close()
+	for _, e := range toReset {
+		next := NextBudgetReset(e.Window, now)
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE budgets SET current_value = 0, reset_at = ? WHERE id = ?`,
+			next.Unix(), e.ID); err != nil {
+			return fmt.Errorf("reset budget %d: %w", e.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// NextBudgetReset returns the unix time at which a budget with the
+// given window should next roll. UTC is used so resets land at the
+// same wall-clock moment for all admins; future work can make the
+// timezone configurable per-budget.
+//
+//	day   → next 00:00 UTC
+//	week  → next Monday 00:00 UTC
+//	month → next 1st of month 00:00 UTC
+//	(default) treated as "day" — same logic as misconfigured rows
+func NextBudgetReset(window string, now time.Time) time.Time {
+	now = now.UTC()
+	switch window {
+	case "month":
+		return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	case "week":
+		// Days until next Monday (1..7).
+		offset := int(time.Monday-now.Weekday()+7) % 7
+		if offset == 0 {
+			offset = 7
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day()+offset, 0, 0, 0, 0, time.UTC)
+		return next
+	default: // "day"
+		return time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	}
 }

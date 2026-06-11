@@ -1803,9 +1803,10 @@ async function renderTokens() {
       renderAllowedModels(k.allowed_models),
       k.revoked ? `<span class="pill pill-err">revoked</span>` : `<span class="pill pill-ok">active</span>`,
       new Date(k.created_at).toLocaleString(),
-      k.revoked ? "" : `<div class="flex gap-2">
+      k.revoked ? "" : `<div class="flex gap-2 flex-wrap">
         <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${k.id}', ${JSON.stringify(k.allowed_models || []).replace(/"/g, '&quot;')}, ${k.allowed_models == null})">models…</button>
         <button class="text-xs text-slate-700 hover:underline" onclick="editTokenRates('${k.id}', ${k.rpm_limit || 0}, ${k.tpm_limit || 0})">rates…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="manageBudgets('${k.id}')">budgets…</button>
         <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>
       </div>`,
     ]);
@@ -1943,6 +1944,102 @@ async function editTokenAllowlist(id, currentList, isUnrestricted) {
     await renderTokens();
   } catch (e) {
     toast(`Update failed: ${e.message}`, "err");
+  }
+}
+
+// manageBudgets opens a small modal listing current budgets for a key
+// with utilization bars + an "Add" form. Add commits via POST /budgets,
+// the row's "remove" link DELETEs.
+async function manageBudgets(keyID) {
+  let budgets;
+  try {
+    budgets = await api(`/admin/v1/tokens/${encodeURIComponent(keyID)}/budgets`);
+  } catch (e) {
+    toast(`Load budgets failed: ${e.message}`, "err");
+    return;
+  }
+  const rowsHTML = (budgets || []).length === 0
+    ? `<div class="text-xs text-slate-500 my-2">No budgets attached. Add one below.</div>`
+    : (budgets || []).map((b) => {
+        const pct = Math.min(100, (b.LimitValue > 0 ? 100 * b.CurrentValue / b.LimitValue : 0));
+        const color = pct > 90 ? "bg-red-600" : pct > 70 ? "bg-amber-500" : "bg-emerald-600";
+        const unitLabel = b.LimitUnit === "usd" ? "$" + b.LimitValue.toFixed(2) : b.LimitValue.toLocaleString() + " tok";
+        const curLabel  = b.LimitUnit === "usd" ? "$" + b.CurrentValue.toFixed(2) : Math.round(b.CurrentValue).toLocaleString();
+        return `
+          <div class="border border-slate-200 rounded p-2 mb-2 text-xs">
+            <div class="flex justify-between mb-1">
+              <span><strong>${b.Window}</strong> · ${curLabel} / ${unitLabel} (${pct.toFixed(1)}%)</span>
+              <button class="text-red-600 hover:underline" onclick="removeBudget('${keyID}', ${b.ID})">remove</button>
+            </div>
+            <div class="h-1.5 bg-slate-200 rounded overflow-hidden">
+              <div class="h-1.5 ${color}" style="width: ${pct}%"></div>
+            </div>
+            <div class="text-slate-500 mt-1">Resets ${new Date(b.ResetAt).toLocaleString()}</div>
+          </div>`;
+      }).join("");
+  // Hand-coded modal because flockForm doesn't expose the "show existing
+  // rows + accept new ones" pattern cleanly. Reuses the same close
+  // semantics (Esc + click-outside) for consistency.
+  const html = `
+    ${rowsHTML}
+    <div class="border-t border-slate-200 mt-3 pt-3">
+      <div class="text-xs font-semibold text-slate-600 mb-2">Add a budget</div>
+      <div class="grid grid-cols-3 gap-2">
+        <select id="newBudgetWindow" class="border border-slate-300 rounded px-2 py-1 text-sm">
+          <option value="day">day</option>
+          <option value="week">week</option>
+          <option value="month" selected>month</option>
+        </select>
+        <input id="newBudgetLimit" type="number" placeholder="limit" min="0" step="0.01"
+               class="border border-slate-300 rounded px-2 py-1 text-sm" />
+        <select id="newBudgetUnit" class="border border-slate-300 rounded px-2 py-1 text-sm">
+          <option value="usd" selected>USD</option>
+          <option value="tokens">tokens</option>
+        </select>
+      </div>
+    </div>`;
+  const out = await _modal({
+    title: `Budgets — ${keyID}`,
+    contentHTML: html,
+    confirmLabel: "Add budget",
+    onConfirm: (wrap) => {
+      const w = wrap.querySelector("#newBudgetWindow").value;
+      const u = wrap.querySelector("#newBudgetUnit").value;
+      const v = parseFloat(wrap.querySelector("#newBudgetLimit").value);
+      if (!Number.isFinite(v) || v <= 0) {
+        toast("Enter a positive limit", "err");
+        return false;
+      }
+      return { window: w, unit: u, value: v };
+    },
+  });
+  if (!out) return;
+  try {
+    await api(`/admin/v1/tokens/${encodeURIComponent(keyID)}/budgets`, {
+      method: "POST",
+      body: JSON.stringify({ window: out.window, limit_unit: out.unit, limit_value: out.value }),
+    });
+    toast("Budget added", "ok");
+    manageBudgets(keyID); // reopen with the new entry
+  } catch (e) {
+    toast(`Add budget failed: ${e.message}`, "err");
+  }
+}
+
+async function removeBudget(keyID, budgetID) {
+  const ok = await flockConfirm({
+    title: `Remove budget ${budgetID}?`,
+    body: `The key will no longer be checked against this budget. Other budgets on the same key keep applying.`,
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/admin/v1/tokens/${encodeURIComponent(keyID)}/budgets/${budgetID}`, { method: "DELETE" });
+    toast("Budget removed", "ok");
+    manageBudgets(keyID);
+  } catch (e) {
+    toast(`Remove failed: ${e.message}`, "err");
   }
 }
 
