@@ -1355,6 +1355,8 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"vllm_api_key":      redact(s.cfg.Engine.VLLMAPIKey),
 			"mlx_endpoint":      s.cfg.Engine.MLXEndpoint,
 			"llamacpp_endpoint": s.cfg.Engine.LlamaCppEndpoint,
+			"whisper_endpoint":  s.cfg.Engine.WhisperEndpoint,
+			"piper_endpoint":    s.cfg.Engine.PiperEndpoint,
 		},
 		Router: map[string]any{
 			"default_model":   s.cfg.Router.DefaultModel,
@@ -1376,8 +1378,11 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"require_keys": s.cfg.Auth.RequireKeys,
 		},
 		Observability: map[string]any{
-			"otlp_endpoint": s.cfg.Observability.OTLPEndpoint,
-			"otlp_status":   otlpStatus(s.cfg.Observability.OTLPEndpoint),
+			"otlp_endpoint":  s.cfg.Observability.OTLPEndpoint,
+			"otlp_status":    otlpStatus(s.cfg.Observability.OTLPEndpoint),
+			"callbacks":      s.cfg.Observability.Callbacks,  // names + kinds; secrets are env-expanded server-side
+			"guardrails":     s.cfg.Observability.Guardrails, // mode + url; auth_key is the literal config string, may be ${ENV} unexpanded
+			"response_cache": s.cfg.Observability.ResponseCache,
 		},
 		Egress: map[string]any{
 			"bedrock_region":  s.cfg.Router.Fallback.BedrockRegion,
@@ -1385,10 +1390,31 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"vertex_project":  s.cfg.Router.Fallback.VertexProject,
 			"vertex_location": s.cfg.Router.Fallback.VertexLocation,
 			"vertex_status":   vertexStatus(s.cfg.Router.Fallback.VertexProject),
+			// OpenAI-compatible hosted gateways. Status is the
+			// presence of the API key (the URL has a sensible
+			// default per vendor and is rarely overridden).
+			"openrouter_status": presence(s.cfg.Router.Fallback.OpenRouterKey, "OPENROUTER_API_KEY"),
+			"groq_status":       presence(s.cfg.Router.Fallback.GroqKey, "GROQ_API_KEY"),
+			"together_status":   presence(s.cfg.Router.Fallback.TogetherKey, "TOGETHER_API_KEY"),
+			"fireworks_status":  presence(s.cfg.Router.Fallback.FireworksKey, "FIREWORKS_API_KEY"),
+			"cohere_status":     presence(s.cfg.Router.Fallback.CohereKey, "COHERE_API_KEY"),
+			"mistral_status":    presence(s.cfg.Router.Fallback.MistralKey, "MISTRAL_API_KEY"),
+			"perplexity_status": presence(s.cfg.Router.Fallback.PerplexityKey, "PERPLEXITY_API_KEY"),
 		},
 		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set ANTHROPIC_API_KEY / OPENAI_API_KEY / FLOCK_* env vars, then restart flock.",
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// presence returns a one-line operator-facing summary for a vendor
+// passthrough — "disabled" when the key is missing, or "configured"
+// when it's set. The dashboard's egress card renders this directly
+// so an operator can see at-a-glance which vendors are reachable.
+func presence(key, envName string) string {
+	if key == "" {
+		return "disabled (set " + envName + ")"
+	}
+	return "configured"
 }
 
 // otlpStatus returns a one-line operator-facing summary of the tracing

@@ -513,15 +513,17 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
       │                  <span class="text-emerald-200 font-bold">⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢</span>                              │
       │                  <span class="text-emerald-400">(this is what we built)</span>                             │
       │  <span class="text-emerald-500">────────────────────────────────────────────────────────────────</span>    │
-      │  <span class="text-emerald-200 font-bold">Gateway</span>     OpenAI + Anthropic on /v1/chat/completions              │
-      │              per-user keys · daily quotas · full audit log           │
-      │              admin dashboard at :8080                                │
+      │  <span class="text-emerald-200 font-bold">Gateway</span>     OpenAI + Anthropic + /v1/rerank + /v1/audio/*           │
+      │              keys: allowlist · RPM/TPM · $ budgets · TTL expiry      │
+      │              guardrails · response cache · callbacks · admin UI      │
       │                                                                      │
-      │  <span class="text-emerald-200 font-bold">Router</span>      Same model on N nodes  → load-balance                   │
-      │              Different models per node → route by placement          │
-      │              Model bigger than any node → split via llama.cpp-RPC    │
-      │              Claude / GPT requested → proxy to vendor                │
-      │              Engine error or timeout  → retry catalog fallback chain │
+      │  <span class="text-emerald-200 font-bold">Router</span>      Same model on N nodes  → load-balance + sticky session  │
+      │              Flaky worker          → placement cooldown (skip)        │
+      │              Different models      → route by placement              │
+      │              Model bigger than node→ split via llama.cpp-RPC         │
+      │              Latency-sensitive     → hedge to top-N workers          │
+      │              Claude / GPT / 7 more → proxy to vendor                 │
+      │              Engine error/timeout  → typed fallback chain + retries  │
       └─────────────────────────────┬────────────────────────────────────────┘</span>
                                     │
               ┌─────────────────────┼─────────────────────┐
@@ -529,11 +531,13 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
        ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
        │   Engines   │       │   Engines   │       │   Egress    │
        │  (any mix)  │       │  (any mix)  │       │   proxy     │
-       │  • Ollama   │       │  • Ollama   │       │             │
-       │  • vLLM     │       │  • vLLM     │       │ api.anthro- │
-       │  • MLX-LM   │       │  • MLX-LM   │       │ pic.com     │
-       │  • llama.cpp│       │  • llama.cpp│       │ api.openai  │
-       └──────┬──────┘       └──────┬──────┘       │ .com        │
+       │  • Ollama   │       │  • Ollama   │       │ Anthropic   │
+       │  • vLLM     │       │  • vLLM     │       │ OpenAI      │
+       │  • MLX-LM   │       │  • MLX-LM   │       │ Bedrock     │
+       │  • llama.cpp│       │  • llama.cpp│       │ OpenRouter  │
+       │  • whisper  │       │  • piper    │       │ Groq, Mist- │
+       │  • piper    │       │  • whisper  │       │ ral, Cohere │
+       └──────┬──────┘       └──────┬──────┘       │ Perplexity… │
               │                     │              └──────┬──────┘
               ▼                     ▼                     ▼
       ┌──────────────────────────────────────────────────────────────────────┐
@@ -613,8 +617,8 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
             <div class="w-10 h-10 bg-blue-100 text-blue-700 rounded-lg flex items-center justify-center text-xl">🔑</div>
             <h3 class="mt-4 font-semibold text-lg">Team-ready out of the box</h3>
             <p class="mt-2 text-slate-600 text-sm leading-relaxed">
-              Per-user API keys with scopes (admin / user / node), daily token quotas, audit log of every call,
-              Prometheus metrics, embedded admin web UI. No nginx, no LiteLLM-plus-Python — just one binary.
+              Per-user API keys with scopes, <strong>TTL expiry</strong>, <strong>model allowlists</strong>, <strong>RPM/TPM rate limits</strong>, <strong>$ budgets</strong>, audit log,
+              Prometheus + OTLP, embedded admin UI. No nginx, no LiteLLM-plus-Python — just one binary.
             </p>
           </div>
 
@@ -655,9 +659,15 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
           <h3 class="font-semibold text-lg">The honest one-line pitch</h3>
           <p class="mt-2 text-slate-300 leading-relaxed">
             The only OSS tool that ships, in <strong class="text-white">one Go binary</strong>, all of:
-            OpenAI-compatible API <strong class="text-white">+</strong> Anthropic-compatible API <strong class="text-white">+</strong>
-            multi-tenant auth/quotas/audit <strong class="text-white">+</strong> multi-node routing <strong class="text-white">+</strong>
-            automatic sharding <strong class="text-white">+</strong> embedded admin UI —
+            OpenAI + Anthropic APIs <strong class="text-white">+</strong>
+            9 vendor passthroughs <strong class="text-white">+</strong>
+            per-key allowlists / rate limits / $ budgets / TTL <strong class="text-white">+</strong>
+            multi-node routing (sticky / cooldown / hedging) <strong class="text-white">+</strong>
+            sharding <strong class="text-white">+</strong>
+            response cache <strong class="text-white">+</strong>
+            guardrails <strong class="text-white">+</strong>
+            webhook / Langfuse callbacks <strong class="text-white">+</strong>
+            embedded admin UI —
             designed for self-hosting on a Mac + Linux team fleet.
           </p>
         </div>
@@ -1839,41 +1849,65 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
           <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-6">
             <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped</h3>
             <ul class="space-y-1.5 text-sm text-emerald-900">
-              <li>• OpenAI + Anthropic API surface, streaming, tool use</li>
+              <li><strong>Core gateway</strong></li>
+              <li>• OpenAI + Anthropic API surface, streaming, tool use, vision (<code>image_url</code>), embeddings (<code>/v1/embeddings</code>)</li>
+              <li>• <code>/v1/rerank</code> (Cohere shape, llama-server passthrough) + <code>/v1/audio/transcriptions</code> + <code>/v1/audio/speech</code> shells (whisper / piper endpoints)</li>
               <li>• Ollama / vLLM / MLX / llama.cpp drivers (single-node + RPC)</li>
-              <li>• Per-user keys, quotas, audit, usage metering, Prometheus</li>
-              <li>• Hybrid local + Anthropic/OpenAI fallback</li>
               <li>• Multi-node routing with heartbeat + placements (LAN mesh)</li>
+              <li>• Sharding auto-orchestration + shard crash auto-restart + auto-distribution of GGUF weights (sha256-verified)</li>
+              <li>• 37-model catalog + license metadata + <code>flock model add hf:/ollama:/file:</code> + <code>--from &lt;my.yaml&gt;</code> for non-catalog installs</li>
+
+              <li class="pt-2"><strong>Multi-tenancy &amp; auth</strong></li>
+              <li>• Per-user API keys, scopes (admin / user / node), <strong>TTL expiry</strong> (<code>--ttl 7d</code>, <code>renew</code>, <code>expire</code>)</li>
+              <li>• <strong>Per-key model allowlist</strong> (literal + <code>claude-*</code> glob) — 403 <code>model_not_allowed</code> + audit row</li>
+              <li>• <strong>Per-key RPM + TPM rate limits</strong> (leaky-bucket) with reconciliation on actual usage</li>
+              <li>• <strong>Daily token quotas</strong> + <strong>dollar budgets</strong> (day/week/month windows; multiple budgets compose with AND)</li>
+              <li>• <strong>Per-call $ cost tracking</strong> (vendor pricing table + catalog override; <code>cost_usd</code> snapshotted on every usage row)</li>
+              <li>• Standard <code>X-RateLimit-*</code> response headers + <code>X-Flock-Request-Id</code> correlation</li>
+
+              <li class="pt-2"><strong>Router intelligence</strong></li>
+              <li>• Failure-based catalog fallback + <strong>typed chains</strong> (<code>fallback_on_context_length</code>, <code>fallback_on_content_policy</code>) with error classification</li>
+              <li>• <strong>Per-request overrides</strong> (<code>flock.fallbacks</code>, <code>num_retries</code>, <code>retry_backoff_ms</code>, <code>hedge</code>) via body or <code>X-Flock-*</code> headers</li>
+              <li>• <strong>Sticky sessions</strong> (KV-cache locality on multi-turn chats) + <strong>placement cooldown</strong> (circuit breaker for flaky workers)</li>
+              <li>• <strong>Request hedging</strong> — fire to top-N least-loaded workers, return whichever responds first</li>
+              <li>• <strong>Latency-aware fallback</strong> (p95 trigger)</li>
+
+              <li class="pt-2"><strong>Hybrid local + cloud</strong></li>
+              <li>• Anthropic + OpenAI passthrough (<code>claude-*</code>, <code>gpt-*</code>)</li>
+              <li>• <strong>7 new vendor passthroughs</strong>: <code>openrouter/</code>, <code>groq/</code>, <code>together/</code>, <code>fireworks/</code>, <code>cohere/</code>, <code>mistral/</code>, <code>perplexity/</code> — slash-prefix stripped before forwarding</li>
+              <li>• <strong>Bedrock SigV4</strong> (anthropic.* family) + Vertex ADC probe</li>
+
+              <li class="pt-2"><strong>Observability &amp; policy</strong></li>
+              <li>• Prometheus metrics, OTLP traces end-to-end across all four engine drivers, reference Grafana dashboards</li>
+              <li>• <strong>Webhook + Langfuse callbacks</strong> — usage / audit fan-out with HMAC-signed payloads, bounded queues</li>
+              <li>• <strong>Guardrails framework</strong> — pre-call webhook hook that can block / rewrite / flag (PII redaction, prompt-injection checks)</li>
+              <li>• <strong>Response cache</strong> for embeddings (memory or SQLite-backed; canonical key; <code>Cache-Control</code> opt-out)</li>
+              <li>• <strong>Time-bucketed usage breakdown</strong> (<code>/admin/v1/usage/breakdown?group_by=user,model&amp;bucket=day</code>)</li>
               <li>• <strong>HMAC mutual auth</strong> for worker token (no plaintext on wire)</li>
-              <li>• Sharding auto-orchestration with <strong>shard crash auto-restart</strong></li>
-              <li>• <strong>Coordinator placement on the strongest worker</strong> (not just leader)</li>
-              <li>• <strong>Auto-distribution of GGUF weights</strong> from leader to shard hosts (sha256-verified)</li>
-              <li>• Vision (<code>image_url</code> via Ollama) + embeddings (<code>/v1/embeddings</code>)</li>
-              <li>• Catalog fallback chains + hardware-floor refusal + license metadata (37 models, all with <code>released:</code> dates)</li>
-              <li>• <strong>Latency-aware fallback</strong> (p95 trigger; opt-in via <code>FLOCK_LATENCY_P95_SECONDS</code>)</li>
-              <li>• <strong>Bedrock SigV4 signing</strong> (anthropic.* family) + Vertex ADC probe</li>
-              <li>• <strong>OTLP traces end-to-end</strong> across all four engine drivers</li>
-              <li>• <strong>Engine health watchdog</strong> + typed <code>engine_unreachable</code> errors with start hints</li>
-              <li>• Reference Grafana dashboards (cluster, per-model, per-node)</li>
-              <li>• 19-client <code>flock connect</code> roster</li>
-              <li>• Embedded web UI: home sparkline + p50/p95/p99 + catalog browser + worker join modal + toast notifications + live polling</li>
-              <li>• CLI ergonomics: interactive picker · shell completion · <code>--json</code> · <code>--summary</code> · <code>--dry-run</code> · first-run wizard · real progress bar · colored output · did-you-mean</li>
-              <li>• Install one-liner + signed binaries + .deb / .rpm packages + 2-node smoke script</li>
+              <li>• Typed <code>engine_unreachable</code> + <code>guardrail_blocked</code> + <code>budget_exceeded</code> errors with actionable hints</li>
+
+              <li class="pt-2"><strong>DX</strong></li>
+              <li>• Embedded web UI: live SSE event stream, modal-based confirm/prompt, audit filter, per-row "models / rates / budgets / expiry" editors, $ today KPI, breakdown panel</li>
+              <li>• 19-client <code>flock connect</code> roster (golden-tested), interactive picker, shell completion, <code>--json</code> / <code>--summary</code> / <code>--dry-run</code> everywhere</li>
+              <li>• Install one-liner + signed binaries + .deb / .rpm packages + 2-node smoke + nightly single-node e2e</li>
             </ul>
           </div>
 
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
             <h3 class="font-semibold text-blue-900 mb-3">→ Next</h3>
             <ul class="space-y-1.5 text-sm text-blue-900">
-              <li>• Bedrock streaming + non-Anthropic body shapes (amazon, meta, mistral)</li>
-              <li>• Vertex body translation (OpenAI/Anthropic → generateContent)</li>
-              <li>• NAS .spk packages (Synology DSM)</li>
+              <li>• <strong>Semantic cache</strong> — chromem-go embedded vector store, per-namespace threshold</li>
+              <li>• <strong>OIDC login for the web UI</strong> (Google / GitHub / Okta)</li>
+              <li>• <strong>Chat completion caching</strong> with streaming replay (today: embeddings only)</li>
+              <li>• <strong>Post-call guardrails</strong> on streamed responses (today: pre-call only)</li>
+              <li>• <strong>Vertex body translation</strong> (OpenAI / Anthropic → <code>generateContent</code>) — ADC probe wired, translation queued</li>
+              <li>• <strong>Bedrock streaming</strong> + non-Anthropic body shapes (amazon, meta, mistral)</li>
+              <li>• <strong>Whisper / Piper engine drivers</strong> (today: endpoint proxies; auto-launch + catalog entries queued)</li>
+              <li>• <strong>Router fallback callback events</strong> (today: usage + audit sinks ship; fallback is in the audit log only)</li>
               <li>• Tailscale (<code>tsnet</code>) mesh for NAT traversal + mTLS</li>
               <li>• LoRA adapter loading + live model migration</li>
-              <li>• Rerank (Cohere shape) + Anthropic extended thinking</li>
-              <li>• ASR (Whisper) + TTS endpoints</li>
               <li>• Postgres backend for HA control plane</li>
-              <li>• AMD ROCm path</li>
+              <li>• AMD ROCm path · NAS .spk packages (Synology DSM)</li>
             </ul>
           </div>
         </div>

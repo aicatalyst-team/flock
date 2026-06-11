@@ -353,18 +353,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Inference
 
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`)
+- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/v1/rerank`)
 - Anthropic-compatible API (`/v1/messages`, `/v1/messages/count_tokens`)
-- SSE streaming
+- Audio endpoints (`/v1/audio/transcriptions`, `/v1/audio/speech`) — proxies to optional `FLOCK_WHISPER_ENDPOINT` / `FLOCK_PIPER_ENDPOINT`; returns HTTP 501 with setup hint when unconfigured
+- Rerank endpoint passes through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response
+- SSE streaming with proper client-disconnect handling (no goroutine leaks; bounded drain on cancel)
 - Tool / function calling (pass-through for capable models)
 - Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path
 - Structured output (JSON schema)
 - `model=auto` smart routing
-- Sticky sessions by user/session ID for KV cache reuse
+- **Response cache** — embeddings cached against a sha256 of the canonicalized request body (object keys sorted; ephemeral fields stripped). Two drivers: in-memory LRU (default) and SQLite-backed (persists across leader restart). Per-request opt-out via `Cache-Control: no-cache` / `no-store`; per-tenant scoping via `flock.cache.namespace` body field. `X-Flock-Cache: hit | miss` response header.
 - Typed `engine_unreachable` errors with engine name, endpoint, and start-hint (e.g. `ollama serve`) when the upstream engine isn't responding
 - Engine health watchdog on auto-spawned engines (force-restart after 3 consecutive failures, covers hung llama-server)
 - LoRA adapter hot-loading (planned)
-- `/v1/completions`, `/v1/audio/transcriptions`, `/v1/rerank` (planned)
+- Chat completion caching with streaming replay + semantic cache (planned)
 
 ### Cluster
 
@@ -377,32 +379,42 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Multi-tenancy
 
-- Per-user API keys with revocation and scopes (admin / user / node)
+- Per-user API keys with revocation, scopes (admin / user / node), and **TTL expiry** (`--ttl 7d`, `--expires-at 2026-07-01`, `flock token renew/expire`)
 - Daily token quotas per key with usage metering
+- **Per-key RPM + TPM rate limits** — leaky-bucket admission control; HTTP 429 with `Retry-After` + `X-RateLimit-Limit/Remaining/Reset-*` headers (OpenAI shape). Reconciles upfront token estimate against actual completion tokens after the response.
+- **Per-key dollar + token budgets** — multiple budgets compose with AND semantics (`$10/day AND $100/month AND 1M tokens/day`). Windows: `day` / `week` / `month` (UTC). HTTP 429 `budget_exceeded` with `X-Flock-Budget-Reset-At` + audit row.
+- **Per-call $ cost tracking** — every usage row stores a `cost_usd` snapshot computed at write time from a built-in vendor pricing table (current Claude + OpenAI rates) or catalog-override fields. `flock usage --summary` shows $ spent; `/admin/v1/usage/breakdown` aggregates by user/model/protocol.
 - **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
-- Audit log of every admin mutation
+- Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Flock-Request-Id` correlation token (also embedded in audit rows for traceability)
+- Audit log of every admin mutation + middleware refusals (`model_not_allowed`, `budget_exceeded`, `router.override`, `guardrail.block`)
 - OIDC login for the web UI (Google, GitHub, Okta) — **planned**; the UI currently uses a pasted admin key
 
 ```bash
 flock token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
 flock token create bob   --models 'claude-*,gpt-*'          # vendor families via glob
+flock token create dave  --rpm 60 --tpm 100000 --ttl 30d    # rate-limited + expiring
+flock token budget add k_abc --window month --limit 100 --unit usd  # $100/month cap
 flock token edit k_abc --add-model gpt-4o-mini              # extend
 flock token edit k_abc --remove-model qwen3-14b             # tighten
-flock token edit k_abc --set-models a,b,c                   # replace
-flock token edit k_abc --clear-models                       # back to "any model"
+flock token renew k_abc --ttl 30d                           # extend expiry
 ```
 
 ### Hybrid local + cloud
 
 - Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
-- **OpenAI-compatible hosted gateways** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>`, `cohere/<model>`, `mistral/<model>`, `perplexity/<model>` route to the matching vendor (set the corresponding `*_API_KEY`). The slash-namespaced prefix is stripped before forwarding so the upstream sees its native id (e.g. `openrouter/anthropic/claude-3-haiku` → `anthropic/claude-3-haiku` on OpenRouter; `mistral/mistral-large-latest` → `mistral-large-latest` on Mistral).
+- **7 OpenAI-compatible hosted gateways** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>`, `cohere/<model>`, `mistral/<model>`, `perplexity/<model>` route to the matching vendor (set the corresponding `*_API_KEY`). The slash-namespaced prefix is stripped before forwarding so the upstream sees its native id (e.g. `openrouter/anthropic/claude-3-haiku` → `anthropic/claude-3-haiku` on OpenRouter; `mistral/mistral-large-latest` → `mistral-large-latest` on Mistral). Vendor pricing entries seeded for the headline models on each.
 - Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
-- **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`flock.fallbacks`, `flock.num_retries`, `flock.retry_backoff_ms`) or `X-Flock-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `flock.fallback.source = catalog | request` so operators can see who's overriding policy.
+- **Typed fallback chains** — catalog entries can declare `fallback_on_context_length` (prompt too long → long-context variant) and `fallback_on_content_policy` (vendor refused → permissive open-weight). The router classifies the primary's error (sentinel `errors.Is` then heuristic substring) and switches the rest of the chain to the matching typed list. Generic `fallback:` is the default when no typed list matches.
+- **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`flock.fallbacks`, `flock.num_retries`, `flock.retry_backoff_ms`, `flock.hedge`) or `X-Flock-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `flock.fallback.source = catalog | request` so operators can see who's overriding policy.
+- **Request hedging** — opt-in per-request (`router.hedge_replicas: 2` in config + `flock.hedge: true` or `X-Flock-Hedge: 1` per call) fires the request to the top-N least-loaded workers concurrently and returns whichever stream opens first; losers are cancelled. Tail-latency win at the cost of ~2× engine load.
+- **Sticky sessions** — when `router.sticky_session_ttl_seconds > 0`, the router pins (user_id, model) to its last worker so multi-turn chats reuse the same node's KV cache. Falls through when the pinned node is in cooldown or stale.
+- **Placement cooldown (circuit breaker)** — after `router.placement_allowed_fails` consecutive engine errors, a worker is parked for `placement_cooldown_seconds`. `pick()` skips it until expiry; a single success after expiry resets the counter. Dashboard's Nodes tab shows a 🚫 cooldown badge with seconds remaining.
 
   ```bash
   curl -s http://localhost:8080/v1/chat/completions \
     -H "Authorization: Bearer sk-orc-..." \
     -H "X-Flock-Num-Retries: 3" \
+    -H "X-Flock-Hedge: 1" \
     -d '{
       "model": "qwen3-14b",
       "messages": [{"role":"user","content":"hi"}],
@@ -412,6 +424,34 @@ flock token edit k_abc --clear-models                       # back to "any model
 
 - **AWS Bedrock**: SigV4 signing for `anthropic.*` models (non-streaming). Streaming body translation for other families pending.
 - **GCP Vertex**: ADC auth probe wired. Body translation for `generateContent` pending.
+
+### Policy + content checks
+
+- **Guardrails framework** — `observability.guardrails` in `config.yaml` chains synchronous content checks against external services before the engine sees the request. Drivers: `webhook` (today; works as a thin shim for Presidio + Bedrock Guardrails + custom in-house policy). Modes: `pre` (block / rewrite / flag), `logging_only` (observe). On block: HTTP 403 `guardrail_blocked` with the guardrail name + reason; audit row recorded. `fail_open: true|false` chooses Allow vs Block on guardrail unreachable.
+
+  ```yaml
+  observability:
+    guardrails:
+      - name: redact-pii
+        kind: webhook
+        mode: pre
+        url: "http://presidio.lan:8080/v1/check"
+        fail_open: false
+  ```
+
+- **Observability callbacks** — usage + audit events fan out to external sinks. Drivers: `webhook` (HMAC-SHA256 signed payloads), `langfuse` (maps usage to `generation-create` against `/api/public/ingestion`). Each sink runs on its own goroutine with a bounded queue — a slow receiver is non-blocking on the hot path; overflow events are dropped and counted on `flock_callback_sent_total{outcome=dropped}`. Admin `GET /admin/v1/callbacks` lists sinks; `POST /admin/v1/callbacks/test[?sink=name]` fires a synthetic event for wiring verification.
+
+  ```yaml
+  observability:
+    callbacks:
+      - kind: webhook
+        url: "https://hooks.example.com/flock"
+        events: [usage, audit]
+        secret: "${WEBHOOK_SECRET}"
+      - kind: langfuse
+        public_key: "${LANGFUSE_PUBLIC_KEY}"
+        secret_key: "${LANGFUSE_SECRET_KEY}"
+  ```
 
 ### Observability
 

@@ -613,7 +613,19 @@ Flock prints this same list at startup as the "Network behavior on this node" ba
 | → `api.openai.com` | On `gpt-*`/`o-*` requests if `OPENAI_API_KEY` is set. | Unset the key. |
 | → `bedrock-runtime.<region>.amazonaws.com` | On `anthropic.*` requests if `FLOCK_BEDROCK_REGION` is set. Uses AWS credentials chain. | Unset `FLOCK_BEDROCK_REGION`. |
 | → `<location>-aiplatform.googleapis.com` | On `gemini-*` requests if `FLOCK_VERTEX_PROJECT` is set. Uses ADC. | Unset `FLOCK_VERTEX_PROJECT`. |
+| → `openrouter.ai/api/v1` | On `openrouter/<model>` requests if `OPENROUTER_API_KEY` is set. | Unset the key (or set `router.fallback.openrouter_url` to redirect). |
+| → `api.groq.com/openai/v1` | On `groq/<model>` requests if `GROQ_API_KEY` is set. | Unset the key. |
+| → `api.together.xyz/v1` | On `together/<model>` requests if `TOGETHER_API_KEY` is set. | Unset the key. |
+| → `api.fireworks.ai/inference/v1` | On `fireworks/<model>` requests if `FIREWORKS_API_KEY` is set. | Unset the key. |
+| → `api.cohere.com/compatibility/v1` | On `cohere/<model>` requests if `COHERE_API_KEY` is set. | Unset the key. |
+| → `api.mistral.ai/v1` | On `mistral/<model>` requests if `MISTRAL_API_KEY` is set. | Unset the key. |
+| → `api.perplexity.ai` | On `perplexity/<model>` requests if `PERPLEXITY_API_KEY` is set. | Unset the key. |
+| → `FLOCK_WHISPER_ENDPOINT` | On `POST /v1/audio/transcriptions` if set. | Unset; endpoint returns 501 with setup hint. |
+| → `FLOCK_PIPER_ENDPOINT` | On `POST /v1/audio/speech` if set. | Unset; endpoint returns 501. |
 | → OTLP collector | If `FLOCK_OTLP_ENDPOINT` is set. Spans go **only** to that endpoint — your own collector, not upstream. | Unset `FLOCK_OTLP_ENDPOINT`. |
+| → webhook URL(s) | Every usage / audit event if `observability.callbacks: [- kind: webhook]` is configured. HMAC-SHA256 signature in `X-Flock-Signature`. | Remove the entry from `config.yaml`. |
+| → `cloud.langfuse.com` (or `host`) | Every usage event if `observability.callbacks: [- kind: langfuse]` is configured. | Remove the entry. |
+| → guardrail webhook URL(s) | Every `/v1/chat/completions` if `observability.guardrails:` is configured. **Synchronous on the request path**; gateway waits for the response. | Remove the entry. |
 | → HuggingFace / Ollama registry | At `flock model add` when pulling weights for a catalog entry. Operator-invoked. | Don't run `flock model add`. |
 
 Set `FLOCK_NO_UPDATE_CHECK=1` if you want **zero** outbound calls from `flock up` itself (assuming no API keys / OTLP / Bedrock / Vertex are configured). The gateway only talks to engines you've chosen and vendors you've keyed.

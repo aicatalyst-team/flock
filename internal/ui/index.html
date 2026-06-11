@@ -885,7 +885,7 @@ async function renderPlayground() {
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm font-semibold">Embeddings</div>
-            <div class="text-xs text-slate-500">POST /v1/embeddings — quick check that an embedding model returns a vector. Use the same Bearer key as chat.</div>
+            <div class="text-xs text-slate-500">POST /v1/embeddings — quick check that an embedding model returns a vector. Use the same Bearer key as chat. Response cache (if enabled) makes repeat calls instant; look for <span class="code">X-Flock-Cache: hit</span>.</div>
           </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
@@ -904,6 +904,39 @@ async function renderPlayground() {
         <div id="pgEmbedResult" class="hidden text-xs">
           <div id="pgEmbedStatus" class="text-slate-500 mb-1"></div>
           <pre id="pgEmbedPre" class="bg-slate-50 border border-slate-200 rounded p-3 font-mono overflow-x-auto"></pre>
+        </div>
+      </div>
+
+      <!-- ─── Rerank ─── -->
+      <div class="mt-6 bg-white border border-slate-200 rounded p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-semibold">Rerank <span class="text-xs text-slate-500 font-normal">(Cohere shape)</span></div>
+            <div class="text-xs text-slate-500">POST /v1/rerank — passes through to llama-server's native rerank (b3580+). Returns a relevance score per document.</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="text-xs text-slate-500">Model</label>
+            <input id="pgRerankModel" type="text" value="bge-reranker-large" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-slate-500">Query</label>
+            <input id="pgRerankQuery" type="text" value="who invented the telephone" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Documents (one per line)</label>
+          <textarea id="pgRerankDocs" rows="3" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono">Alexander Graham Bell patented the telephone in 1876.
+Thomas Edison invented the phonograph in 1877.
+Nikola Tesla pioneered AC electrical systems.</textarea>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="pgRerank()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Rerank</button>
+        </div>
+        <div id="pgRerankResult" class="hidden text-xs">
+          <div id="pgRerankStatus" class="text-slate-500 mb-1"></div>
+          <pre id="pgRerankPre" class="bg-slate-50 border border-slate-200 rounded p-3 font-mono overflow-x-auto"></pre>
         </div>
       </div>`;
 
@@ -986,6 +1019,71 @@ async function pgEmbed() {
     // Show the first 12 components + ellipsis to keep the UI tight.
     const preview = vec.slice(0, 12).map((x) => x.toFixed(4)).join(", ");
     pre.textContent = `[${preview}${vec.length > 12 ? `, … ${vec.length - 12} more` : ""}]`;
+    // Surface cache hit/miss when present (response cache is opt-in
+    // by config; the X-Flock-Cache header tells the truth).
+    const cache = resp.headers.get("X-Flock-Cache");
+    if (cache) status.textContent += ` · cache: ${cache}`;
+  } catch (e) {
+    status.textContent = "error";
+    pre.textContent = e.message;
+  }
+}
+
+// appendHeaderHints surfaces the rate-limit + request-id + cache
+// response headers below the playground's status line. Helpful when
+// debugging "why was that request rejected" — Retry-After explains a
+// 429, X-Flock-Request-Id ties to the audit row.
+function appendHeaderHints(statusEl, headers) {
+  if (!statusEl) return;
+  const bits = [];
+  const rid = headers.get("X-Flock-Request-Id");
+  if (rid) bits.push(`req=${rid.slice(0, 12)}`);
+  const remR = headers.get("X-RateLimit-Remaining-Requests");
+  if (remR != null) bits.push(`rpm-left=${remR}`);
+  const remT = headers.get("X-RateLimit-Remaining-Tokens");
+  if (remT != null) bits.push(`tpm-left=${remT}`);
+  const retry = headers.get("Retry-After");
+  if (retry) bits.push(`retry-after=${retry}s`);
+  const cache = headers.get("X-Flock-Cache");
+  if (cache) bits.push(`cache=${cache}`);
+  if (bits.length > 0) {
+    statusEl.textContent += " · " + bits.join(" · ");
+  }
+}
+
+// pgRerank fires /v1/rerank against llama-server's native endpoint.
+// Result is the Cohere-shape {results: [{index, relevance_score}, …]}.
+async function pgRerank() {
+  const model = $("#pgRerankModel").value.trim();
+  const query = $("#pgRerankQuery").value.trim();
+  const docs = $("#pgRerankDocs").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!query) { toast("Type a query.", "err"); $("#pgRerankQuery").focus(); return; }
+  if (docs.length < 2) { toast("Add at least two documents.", "err"); $("#pgRerankDocs").focus(); return; }
+  const wrap = $("#pgRerankResult");
+  const status = $("#pgRerankStatus");
+  const pre = $("#pgRerankPre");
+  wrap.classList.remove("hidden");
+  status.textContent = "scoring…";
+  pre.textContent = "";
+  const t0 = performance.now();
+  try {
+    const resp = await fetch("/v1/rerank", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, query, documents: docs }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`${resp.status}: ${t}`);
+    }
+    const obj = await resp.json();
+    const ms = Math.round(performance.now() - t0);
+    const results = obj.results || [];
+    status.textContent = `done · ${results.length} scored · ${ms} ms`;
+    pre.textContent = results
+      .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
+      .map((r) => `${(r.relevance_score || 0).toFixed(4)}  ${docs[r.index] ?? "?"}`)
+      .join("\n");
   } catch (e) {
     status.textContent = "error";
     pre.textContent = e.message;
@@ -1052,6 +1150,9 @@ async function pgSend() {
       const t = await resp.text();
       throw new Error(`${resp.status}: ${t}`);
     }
+    // Surface the rate-limit + correlation headers so a user can see
+    // throttle-state directly from the playground.
+    appendHeaderHints(status, resp.headers);
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -2413,22 +2514,42 @@ async function renderSettings() {
         </div>
 
         <div class="bg-white border border-slate-200 rounded p-4">
-          <div class="text-sm font-semibold mb-2">Cloud egress (Bedrock + Vertex)</div>
+          <div class="text-sm font-semibold mb-2">Cloud egress &mdash; 9 vendors</div>
           ${statusRow("AWS Bedrock (anthropic.* via SigV4)", (cfg.egress || {}).bedrock_status || "disabled")}
           ${statusRow("Google Vertex (ADC probe)", (cfg.egress || {}).vertex_status || "disabled")}
-          <div class="text-xs text-slate-500 mt-2">Bedrock signing uses the standard AWS credentials chain (env, shared config, instance role). Vertex uses Application Default Credentials (<span class="code">gcloud auth application-default login</span> / service account JSON / workload identity). Body translation for non-Anthropic Bedrock families and for Vertex Gemini lands in v0.7.</div>
+          ${statusRow("OpenRouter (openrouter/<model>)", (cfg.egress || {}).openrouter_status || "disabled")}
+          ${statusRow("Groq (groq/<model>)", (cfg.egress || {}).groq_status || "disabled")}
+          ${statusRow("Together (together/<model>)", (cfg.egress || {}).together_status || "disabled")}
+          ${statusRow("Fireworks (fireworks/<model>)", (cfg.egress || {}).fireworks_status || "disabled")}
+          ${statusRow("Cohere (cohere/<model>)", (cfg.egress || {}).cohere_status || "disabled")}
+          ${statusRow("Mistral La Plateforme (mistral/<model>)", (cfg.egress || {}).mistral_status || "disabled")}
+          ${statusRow("Perplexity (perplexity/<model>)", (cfg.egress || {}).perplexity_status || "disabled")}
+          <div class="text-xs text-slate-500 mt-2">Anthropic + OpenAI are wired separately via <span class="code">ANTHROPIC_API_KEY</span> / <span class="code">OPENAI_API_KEY</span> (see Router config). Bedrock signing uses the AWS credentials chain. Vertex uses Application Default Credentials. The 7 OpenAI-compatible gateways strip the slash-prefix from the model id before forwarding — so <span class="code">openrouter/anthropic/claude-3-haiku</span> reaches OpenRouter as <span class="code">anthropic/claude-3-haiku</span>.</div>
         </div>
+
+        <div id="callbacksCard" class="bg-white border border-slate-200 rounded p-4"></div>
+        <div id="guardrailsCard" class="bg-white border border-slate-200 rounded p-4"></div>
+        <div id="cacheCard" class="bg-white border border-slate-200 rounded p-4"></div>
       </div>
 
       <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
         <div class="font-semibold mb-1">To change settings</div>
         <div>${cfg.edit_hint || "Edit ~/.flock/config.yaml and restart flock."}</div>
         <div class="mt-2">Vendor fallback keys come from env vars:</div>
-        <pre class="text-xs bg-amber-100 mt-1 p-2 rounded">ANTHROPIC_API_KEY=…   # enables claude-* via /v1/messages
-OPENAI_API_KEY=…      # enables gpt-* via /v1/chat/completions
-FLOCK_BEDROCK_REGION=us-east-1   # enables anthropic.* via Bedrock SigV4
-FLOCK_VERTEX_PROJECT=my-project  # wires Vertex ADC probe
-FLOCK_OTLP_ENDPOINT=http://localhost:4318   # exports traces</pre>
+        <pre class="text-xs bg-amber-100 mt-1 p-2 rounded">ANTHROPIC_API_KEY=…   # claude-* via /v1/messages
+OPENAI_API_KEY=…      # gpt-* / o-* via /v1/chat/completions
+FLOCK_BEDROCK_REGION=us-east-1   # anthropic.* via Bedrock SigV4
+FLOCK_VERTEX_PROJECT=my-project  # Vertex ADC probe
+OPENROUTER_API_KEY=…  # openrouter/&lt;model&gt;
+GROQ_API_KEY=…        # groq/&lt;model&gt;
+TOGETHER_API_KEY=…    # together/&lt;model&gt;
+FIREWORKS_API_KEY=…   # fireworks/&lt;model&gt;
+COHERE_API_KEY=…      # cohere/&lt;model&gt;
+MISTRAL_API_KEY=…     # mistral/&lt;model&gt;
+PERPLEXITY_API_KEY=…  # perplexity/&lt;model&gt;
+FLOCK_WHISPER_ENDPOINT=http://localhost:8083  # /v1/audio/transcriptions
+FLOCK_PIPER_ENDPOINT=http://localhost:8084    # /v1/audio/speech
+FLOCK_OTLP_ENDPOINT=http://localhost:4318     # OTLP traces</pre>
       </div>
 
       <div class="mt-4 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-900">
@@ -2452,9 +2573,142 @@ FLOCK_OTLP_ENDPOINT=http://localhost:4318   # exports traces</pre>
           <div>Docs: <a class="underline" href="https://github.com/hadihonarvar/flock">github.com/hadihonarvar/flock</a></div>
         </div>
       </div>`;
+    // Populate the dynamic cards. Fire in parallel so a slow sink
+    // doesn't block the others; each card paints independently when
+    // its data lands.
+    loadCallbacksCard();
+    loadGuardrailsCard(cfg);
+    loadCacheCard();
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
+}
+
+// loadCallbacksCard fills the Settings page's callbacks card from
+// /admin/v1/callbacks. Lists configured sinks with a "Test" button
+// per sink that fires a synthetic event via POST /callbacks/test.
+async function loadCallbacksCard() {
+  const card = $("#callbacksCard");
+  if (!card) return;
+  let title = `<div class="text-sm font-semibold mb-2">Observability callbacks</div>`;
+  try {
+    const resp = await api("/admin/v1/callbacks");
+    const sinks = resp.sinks || [];
+    if (sinks.length === 0) {
+      card.innerHTML = title + `<div class="text-xs text-slate-500">No callbacks configured. Add a <span class="code">webhook</span> or <span class="code">langfuse</span> entry under <span class="code">observability.callbacks</span> in <span class="code">~/.flock/config.yaml</span> to ship usage / audit events to an external observability surface.</div>`;
+      return;
+    }
+    const rows = sinks.map((s) => `
+      <div class="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+        <div>
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>
+          <span class="text-sm font-medium">${s.name}</span>
+        </div>
+        <button class="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                onclick="fireCallbackTest('${s.name}', this)">Send test event</button>
+      </div>`).join("");
+    card.innerHTML = title + rows +
+      `<div class="text-xs text-slate-500 mt-2">Each sink runs on its own goroutine with a bounded queue — a slow receiver is non-blocking on the request path. Drops on overflow are counted on <span class="code">flock_callback_sent_total{outcome=dropped}</span>.</div>`;
+  } catch (e) {
+    card.innerHTML = title + `<div class="text-xs text-red-600">${e.message}</div>`;
+  }
+}
+
+async function fireCallbackTest(sink, btn) {
+  return withButtonLoading(btn, async () => {
+    try {
+      const out = await api(`/admin/v1/callbacks/test?sink=${encodeURIComponent(sink)}`, { method: "POST" });
+      toast(`Fired test event to ${sink} (count: ${out.fired || 0})`, "ok");
+    } catch (e) {
+      toast(`Test failed: ${e.message}`, "err");
+    }
+  });
+}
+
+// loadGuardrailsCard reads from /admin/v1/config (already fetched —
+// we pass it through to avoid a second round-trip). Guardrails today
+// is configuration-only — no live test endpoint — so the card is a
+// status read-out.
+async function loadGuardrailsCard(cfg) {
+  const card = $("#guardrailsCard");
+  if (!card) return;
+  const title = `<div class="text-sm font-semibold mb-2">Guardrails</div>`;
+  const guards = (cfg.observability || {}).guardrails || cfg.guardrails || [];
+  if (!guards || guards.length === 0) {
+    card.innerHTML = title +
+      `<div class="text-xs text-slate-500">No guardrails configured. Add entries under <span class="code">observability.guardrails</span> in <span class="code">~/.flock/config.yaml</span> to run synchronous content checks against an external service before the engine sees the request. Drivers: <span class="code">webhook</span> (works as a thin shim for Presidio, Bedrock Guardrails, or in-house policy).</div>` +
+      `<div class="text-xs text-slate-500 mt-2">Modes: <code>pre</code> (block / rewrite / flag) · <code>logging_only</code> (observe). Block returns HTTP 403 <code>guardrail_blocked</code> and lands in the audit log.</div>`;
+    return;
+  }
+  const rows = guards.map((g) => {
+    const modeColor = g.mode === "pre" ? "text-emerald-700 bg-emerald-50" :
+                      g.mode === "logging_only" ? "text-slate-700 bg-slate-100" :
+                      "text-amber-700 bg-amber-50";
+    return `<div class="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+      <div>
+        <span class="text-sm font-medium">${g.name || "(unnamed)"}</span>
+        <span class="text-xs text-slate-500 ml-2">${g.kind}</span>
+      </div>
+      <span class="text-xs ${modeColor} px-2 py-0.5 rounded font-mono">${g.mode || "?"}</span>
+    </div>`;
+  }).join("");
+  card.innerHTML = title + rows;
+}
+
+// loadCacheCard renders the response-cache stats + a flush button.
+// Falls through to a "disabled" hint when no cache is configured.
+async function loadCacheCard() {
+  const card = $("#cacheCard");
+  if (!card) return;
+  const title = `<div class="text-sm font-semibold mb-2">Response cache</div>`;
+  try {
+    const resp = await api("/admin/v1/cache/stats");
+    if (!resp.enabled) {
+      card.innerHTML = title +
+        `<div class="text-xs text-slate-500">Response cache disabled. Enable under <span class="code">observability.response_cache</span> in <span class="code">~/.flock/config.yaml</span> (driver: <code>memory</code> or <code>sqlite</code>). Caches deterministic embedding responses; chat-completion caching with streaming replay is on the roadmap.</div>`;
+      return;
+    }
+    const s = resp.stats || {};
+    const hitRate = (s.hits_total + s.misses_total) > 0
+      ? (100 * s.hits_total / (s.hits_total + s.misses_total)).toFixed(1) + "%"
+      : "—";
+    card.innerHTML = title + `
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div><div class="text-xs text-slate-500">Driver</div><div class="font-mono">${s.driver}</div></div>
+        <div><div class="text-xs text-slate-500">Entries</div><div class="font-mono">${(s.entries || 0).toLocaleString()}</div></div>
+        <div><div class="text-xs text-slate-500">Bytes</div><div class="font-mono">${(s.bytes_stored || 0).toLocaleString()}</div></div>
+        <div><div class="text-xs text-slate-500">Hit rate</div><div class="font-mono">${hitRate}</div></div>
+        <div><div class="text-xs text-slate-500">Hits</div><div class="font-mono">${(s.hits_total || 0).toLocaleString()}</div></div>
+        <div><div class="text-xs text-slate-500">Misses</div><div class="font-mono">${(s.misses_total || 0).toLocaleString()}</div></div>
+        <div><div class="text-xs text-slate-500">Evicted</div><div class="font-mono">${(s.evicted_total || 0).toLocaleString()}</div></div>
+        <div class="flex items-end">
+          <button onclick="flushCache(this)"
+                  class="text-xs bg-red-600 text-white hover:bg-red-700 px-3 py-1 rounded">Flush all</button>
+        </div>
+      </div>
+      <div class="text-xs text-slate-500 mt-3">Per-request opt-out via <span class="code">Cache-Control: no-cache</span> / <span class="code">no-store</span>. Per-tenant scoping via <span class="code">flock.cache.namespace</span> body field. Responses carry <span class="code">X-Flock-Cache: hit | miss</span>.</div>`;
+  } catch (e) {
+    card.innerHTML = title + `<div class="text-xs text-red-600">${e.message}</div>`;
+  }
+}
+
+async function flushCache(btn) {
+  const ok = await flockConfirm({
+    title: "Flush every cache entry?",
+    body: "This drops every cached response across all namespaces. Subsequent requests will hit the engine until the cache warms again.",
+    confirmLabel: "Flush all",
+    danger: true,
+  });
+  if (!ok) return;
+  await withButtonLoading(btn, async () => {
+    try {
+      await api("/admin/v1/cache?all=1", { method: "DELETE" });
+      toast("Cache flushed", "ok");
+      loadCacheCard();
+    } catch (e) {
+      toast(`Flush failed: ${e.message}`, "err");
+    }
+  });
 }
 
 function stateBadge(s) {
