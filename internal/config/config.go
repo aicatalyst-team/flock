@@ -120,6 +120,31 @@ type ObservabilityConfig struct {
 	// http://localhost:4318). Empty → tracing disabled (NoopTracerProvider,
 	// zero overhead). Set via FLOCK_OTLP_ENDPOINT env or this YAML key.
 	OTLPEndpoint string `yaml:"otlp_endpoint"`
+
+	// Callbacks ship usage / audit / fallback events to external
+	// observability sinks (webhooks, Langfuse, etc.). Each entry runs
+	// in its own goroutine with a bounded queue — a slow receiver
+	// can't stall the gateway. Drops on overflow are counted via
+	// flock_callback_sent_total{outcome="dropped"}.
+	Callbacks []CallbackConfig `yaml:"callbacks"`
+}
+
+// CallbackConfig is one row from the observability.callbacks list.
+// Different `kind` values use different fields; the loader builds the
+// matching internal/callbacks driver.
+type CallbackConfig struct {
+	Kind   string   `yaml:"kind"`   // "webhook" | "langfuse"
+	ID     string   `yaml:"id"`     // optional human label; defaults to kind
+	URL    string   `yaml:"url"`    // webhook only
+	Secret string   `yaml:"secret"` // webhook only — env-expanded
+	Events []string `yaml:"events"` // webhook only — defaults to all kinds
+
+	// Langfuse-specific. PublicKey / SecretKey are env-expanded.
+	Host      string `yaml:"host"`
+	PublicKey string `yaml:"public_key"`
+	SecretKey string `yaml:"secret_key"`
+
+	QueueSize int `yaml:"queue_size"` // 0 = 100
 }
 
 // Default returns a Config populated with safe defaults for a single-node setup.

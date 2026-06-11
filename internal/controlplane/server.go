@@ -21,6 +21,7 @@ import (
 
 	"github.com/hadihonarvar/flock/internal/api"
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/events"
@@ -51,6 +52,7 @@ type Server struct {
 	anthropicH  *api.AnthropicHandler
 	egressH     *api.EgressHandler
 	rateBuckets *api.BucketStore
+	callbacks   *callbacks.Dispatcher
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
@@ -148,6 +150,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// recordUsage step does a price lookup against this catalog +
 	// vendor pricing table to populate usage.cost_usd.
 	api.SetCatalog(cat)
+	// Observability callbacks (webhooks / Langfuse). Each configured
+	// sink runs in its own goroutine with a bounded queue.
+	dispatcher := buildCallbackDispatcher(cfg.Observability.Callbacks, log)
+	api.SetCallbackDispatcher(dispatcher)
 	return &Server{
 		cfg:         cfg,
 		store:       st,
@@ -160,8 +166,56 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		anthropicH:  anthropicH,
 		egressH:     egressH,
 		rateBuckets: buckets,
+		callbacks:   dispatcher,
 		bus:         events.New(),
 	}
+}
+
+// buildCallbackDispatcher constructs the observability fan-out from
+// the YAML rows. Each row maps to either a Webhook or a Langfuse
+// driver; unknown kinds are ignored (with a warn log) so a typo'd
+// config doesn't crash startup.
+func buildCallbackDispatcher(rows []config.CallbackConfig, log *slog.Logger) *callbacks.Dispatcher {
+	if len(rows) == 0 {
+		return nil
+	}
+	sinks := make([]callbacks.Sink, 0, len(rows))
+	for _, r := range rows {
+		switch r.Kind {
+		case "webhook":
+			if r.URL == "" {
+				log.Warn("webhook callback missing url — skipping", "id", r.ID)
+				continue
+			}
+			sinks = append(sinks, callbacks.NewWebhook(callbacks.WebhookConfig{
+				ID:      r.ID,
+				URL:     r.URL,
+				Secret:  os.ExpandEnv(r.Secret),
+				Events:  r.Events,
+				QueueSz: r.QueueSize,
+			}, log))
+		case "langfuse":
+			pub := os.ExpandEnv(r.PublicKey)
+			sec := os.ExpandEnv(r.SecretKey)
+			if pub == "" || sec == "" {
+				log.Warn("langfuse callback missing keys — skipping", "id", r.ID)
+				continue
+			}
+			sinks = append(sinks, callbacks.NewLangfuse(callbacks.LangfuseConfig{
+				ID:        r.ID,
+				Host:      r.Host,
+				PublicKey: pub,
+				SecretKey: sec,
+				QueueSz:   r.QueueSize,
+			}, log))
+		default:
+			log.Warn("unknown callback kind — skipping", "kind", r.Kind)
+		}
+	}
+	if len(sinks) == 0 {
+		return nil
+	}
+	return callbacks.NewDispatcher(log, sinks...)
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -349,6 +403,11 @@ func (s *Server) routes() http.Handler {
 			r.Post("/connect/snippet", s.renderConnectSnippet)
 			r.Post("/invite", s.inviteUser)
 			r.Post("/healthcheck", s.healthcheck)
+
+			// Observability callbacks — list configured sinks +
+			// fire a synthetic test event.
+			r.Get("/callbacks", s.listCallbacks)
+			r.Post("/callbacks/test", s.testCallback)
 		})
 	})
 
@@ -1620,6 +1679,49 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 	})
 }
 
+// listCallbacks returns the names of every configured observability
+// sink so an operator can confirm which ones are running.
+func (s *Server) listCallbacks(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]string{}
+	if s.callbacks != nil {
+		for _, sink := range s.callbacks.Sinks() {
+			out = append(out, map[string]string{"name": sink.Name()})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sinks": out})
+}
+
+// testCallback fires a synthetic event so the operator can verify a
+// receiver is wired up without waiting for real traffic. Optional
+// query param `?sink=<name>` targets a single sink; otherwise every
+// sink that subscribes to "test" gets a copy. The "test" event kind
+// piggybacks on existing subscriptions — sinks that listen to "all"
+// (empty events filter) will pick it up.
+func (s *Server) testCallback(w http.ResponseWriter, r *http.Request) {
+	if s.callbacks == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "no-callbacks-configured"})
+		return
+	}
+	target := r.URL.Query().Get("sink")
+	evt := callbacks.Event{
+		Kind: "test",
+		Payload: map[string]any{
+			"request_id": api.RequestIDFrom(r.Context()),
+			"sent_by":    "/admin/v1/callbacks/test",
+			"note":       "synthetic event — if you see this, the sink is reachable",
+		},
+	}
+	fired := 0
+	for _, sink := range s.callbacks.Sinks() {
+		if target != "" && sink.Name() != target {
+			continue
+		}
+		sink.Send(r.Context(), evt)
+		fired++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fired": fired, "target": target})
+}
+
 // auditMiddleware records every admin action.
 //
 // Target is set to the caller's remote address (useful for forensics) rather
@@ -1632,11 +1734,26 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		if k := auth.KeyFrom(r.Context()); k != nil {
 			actor = k.Name
 		}
+		action := r.Method + " " + r.URL.Path
 		_ = s.store.Audit().Record(r.Context(), store.AuditEntry{
 			TS: time.Now(), Actor: actor,
-			Action: r.Method + " " + r.URL.Path,
+			Action: action,
 			Target: r.RemoteAddr,
 		})
+		// Mirror to any configured observability callbacks. Same
+		// shape as the audit_log row so a receiver doesn't need to
+		// keep a separate schema.
+		if s.callbacks != nil {
+			s.callbacks.Publish(r.Context(), callbacks.Event{
+				Kind: "audit",
+				Payload: map[string]any{
+					"actor":      actor,
+					"action":     action,
+					"target":     r.RemoteAddr,
+					"request_id": api.RequestIDFrom(r.Context()),
+				},
+			})
+		}
 	})
 }
 

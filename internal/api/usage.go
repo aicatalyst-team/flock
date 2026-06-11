@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/metrics"
 	"github.com/hadihonarvar/flock/internal/models"
@@ -77,6 +78,19 @@ var globalBucketStore *BucketStore
 // based on actual completion tokens vs the upfront estimate.
 func SetBucketStore(s *BucketStore) { globalBucketStore = s }
 
+// globalCallbackDispatcher is the per-process fan-out for observability
+// events. nil = no sinks configured; Publish is a no-op.
+var globalCallbackDispatcher *callbacks.Dispatcher
+
+// SetCallbackDispatcher wires the dispatcher so recordUsage can emit
+// usage events to webhooks / Langfuse / etc.
+func SetCallbackDispatcher(d *callbacks.Dispatcher) { globalCallbackDispatcher = d }
+
+// CallbackDispatcher returns the configured dispatcher (or nil).
+// Exposed so the audit middleware in the controlplane package can
+// publish "audit" events without re-importing the global.
+func CallbackDispatcher() *callbacks.Dispatcher { return globalCallbackDispatcher }
+
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already
 // completed successfully from the user's perspective).
@@ -127,6 +141,27 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	// once the running total catches up.
 	if keyID != "" {
 		incrementBudgetsAfterUsage(ctx, st, keyID, int64(prompt+completion), cost)
+	}
+
+	// Publish the usage event to any configured observability sinks
+	// (webhook / Langfuse / etc). Non-blocking; a slow receiver can't
+	// stall the response path.
+	if globalCallbackDispatcher != nil {
+		globalCallbackDispatcher.Publish(ctx, callbacks.Event{
+			Kind: "usage",
+			Payload: map[string]any{
+				"request_id":        RequestIDFrom(ctx),
+				"key_id":            keyID,
+				"user_id":           userID,
+				"model":             model,
+				"protocol":          protocol,
+				"prompt_tokens":     float64(prompt),
+				"completion_tokens": float64(completion),
+				"latency_ms":        latency.Milliseconds(),
+				"outcome":           outcome,
+				"cost_usd":          cost,
+			},
+		})
 	}
 
 	// Reconcile the rate-limit TPM bucket. The middleware deducted an
