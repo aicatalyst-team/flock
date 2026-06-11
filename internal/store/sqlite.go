@@ -27,7 +27,23 @@ type Store interface {
 	Usage() UsageStore
 	Audit() AuditStore
 	Budgets() BudgetStore
+	// Cache is the persistent backend for the response cache. The
+	// cache package wraps this with its driver-shape API.
+	Cache() CacheStore
 	Close() error
+}
+
+// CacheStore is the persistent cache surface. Values are opaque
+// bytes; expiry is a unix-epoch second.
+type CacheStore interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key, namespace string, value []byte, expiresAt time.Time) error
+	Delete(ctx context.Context, key string) error
+	DeleteNamespace(ctx context.Context, namespace string) error
+	// SweepExpired deletes rows whose expires_at < now. Called by the
+	// cache package's reaper.
+	SweepExpired(ctx context.Context, now time.Time) (int64, error)
+	Count(ctx context.Context) (int, int64, error) // entries, total bytes
 }
 
 // ---- types ----
@@ -329,6 +345,7 @@ func (s *sqliteStore) Shards() ShardStore         { return &sqliteShards{db: s.d
 func (s *sqliteStore) Usage() UsageStore          { return &sqliteUsage{db: s.db} }
 func (s *sqliteStore) Audit() AuditStore          { return &sqliteAudit{db: s.db} }
 func (s *sqliteStore) Budgets() BudgetStore       { return &sqliteBudgets{db: s.db} }
+func (s *sqliteStore) Cache() CacheStore          { return &sqliteCache{db: s.db} }
 func (s *sqliteStore) Close() error               { return s.db.Close() }
 
 const schema = `
@@ -423,6 +440,15 @@ CREATE TABLE IF NOT EXISTS budgets (
     created_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_budgets_key ON budgets(api_key_id);
+
+CREATE TABLE IF NOT EXISTS cache (
+    key        TEXT PRIMARY KEY,
+    namespace  TEXT NOT NULL DEFAULT '',
+    value      BLOB NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cache_expires_at ON cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_cache_namespace ON cache(namespace);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1353,4 +1379,67 @@ func NextBudgetReset(window string, now time.Time) time.Time {
 	default: // "day"
 		return time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 	}
+}
+
+// ---- cache ----
+
+type sqliteCache struct{ db *sql.DB }
+
+func (s *sqliteCache) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	var value []byte
+	var expiresAt int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value, expires_at FROM cache WHERE key = ?`, key).Scan(&value, &expiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("cache get: %w", err)
+	}
+	if expiresAt > 0 && time.Now().Unix() > expiresAt {
+		return nil, false, nil
+	}
+	return value, true, nil
+}
+
+func (s *sqliteCache) Set(ctx context.Context, key, namespace string, value []byte, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO cache(key, namespace, value, expires_at)
+		 VALUES(?,?,?,?)
+		 ON CONFLICT(key) DO UPDATE SET
+		   namespace=excluded.namespace,
+		   value=excluded.value,
+		   expires_at=excluded.expires_at`,
+		key, namespace, value, expiresAt.Unix())
+	if err != nil {
+		return fmt.Errorf("cache set: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteCache) Delete(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE key = ?`, key)
+	return err
+}
+
+func (s *sqliteCache) DeleteNamespace(ctx context.Context, namespace string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE namespace = ?`, namespace)
+	return err
+}
+
+func (s *sqliteCache) SweepExpired(ctx context.Context, now time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE expires_at > 0 AND expires_at < ?`, now.Unix())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (s *sqliteCache) Count(ctx context.Context) (int, int64, error) {
+	var n int
+	var bytes int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)), 0) FROM cache`).Scan(&n, &bytes)
+	return n, bytes, err
 }

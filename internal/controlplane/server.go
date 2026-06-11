@@ -21,6 +21,7 @@ import (
 
 	"github.com/hadihonarvar/flock/internal/api"
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/cache"
 	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/guardrails"
@@ -157,6 +158,8 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	api.SetCallbackDispatcher(dispatcher)
 	// Guardrails (pre-call hooks). Synchronous on the request path.
 	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, log))
+	// Response cache (embeddings today; chat in follow-up).
+	api.SetResponseCache(buildResponseCache(cfg.Observability.ResponseCache, st, log))
 	// Audio + rerank endpoint proxies. Empty endpoints → handler
 	// returns 501 with setup hint instead of trying.
 	api.SetRerankAudioConfig(api.RerankAudioConfig{
@@ -178,6 +181,25 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		rateBuckets: buckets,
 		callbacks:   dispatcher,
 		bus:         events.New(),
+	}
+}
+
+// buildResponseCache instantiates the configured driver (memory or
+// sqlite). Returns nil when disabled — the api package short-circuits
+// the cache path on nil.
+func buildResponseCache(cfg config.ResponseCacheConfig, st store.Store, log *slog.Logger) cache.Cache {
+	if !cfg.Enabled {
+		return nil
+	}
+	ttl := time.Duration(cfg.DefaultTTLSeconds) * time.Second
+	switch cfg.Driver {
+	case "", "memory":
+		return cache.NewMemory(cfg.MaxEntries, ttl)
+	case "sqlite":
+		return cache.NewSQLite(st.Cache(), ttl)
+	default:
+		log.Warn("unknown response_cache driver — disabling cache", "driver", cfg.Driver)
+		return nil
 	}
 }
 
@@ -480,6 +502,10 @@ func (s *Server) routes() http.Handler {
 			// fire a synthetic test event.
 			r.Get("/callbacks", s.listCallbacks)
 			r.Post("/callbacks/test", s.testCallback)
+
+			// Response cache stats + flush.
+			r.Get("/cache/stats", s.cacheStats)
+			r.Delete("/cache", s.cacheFlush)
 		})
 	})
 
@@ -1749,6 +1775,52 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			"req_id", middleware.GetReqID(r.Context()),
 		)
 	})
+}
+
+// cacheStats returns the response cache driver + counters. Returns
+// 200 with a "cache disabled" sentinel when no cache is configured
+// rather than a 404 — that way the dashboard's settings tab always
+// gets a parseable payload.
+func (s *Server) cacheStats(w http.ResponseWriter, r *http.Request) {
+	c := api.ResponseCache()
+	if c == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	stats := c.Stats()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"stats":   stats,
+	})
+}
+
+// cacheFlush drops cached entries. With no query string it would be
+// dangerous on a busy cache; require an explicit namespace (or `all=1`
+// for the nuclear option). The audit middleware records the call.
+func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
+	c := api.ResponseCache()
+	if c == nil {
+		writeJSONError(w, http.StatusOK, "cache_disabled")
+		return
+	}
+	ns := r.URL.Query().Get("namespace")
+	all := r.URL.Query().Get("all") == "1"
+	if ns == "" && !all {
+		writeJSONError(w, http.StatusBadRequest, "specify ?namespace=<name> or ?all=1")
+		return
+	}
+	if all {
+		// "all" is implemented as deleting the empty-string namespace
+		// — every key in the memory driver ends up in some namespace
+		// folder (empty namespace = no prefix), and the SQLite driver's
+		// DeleteNamespace("") matches all rows with no explicit ns. For
+		// the bullet-proof case we walk both possibilities.
+		c.DeleteNamespace(r.Context(), "")
+	}
+	if ns != "" {
+		c.DeleteNamespace(r.Context(), ns)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "flushed", "namespace": ns, "all": all})
 }
 
 // listCallbacks returns the names of every configured observability

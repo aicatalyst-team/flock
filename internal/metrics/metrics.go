@@ -107,6 +107,24 @@ func ObserveGuardrail(name, action string) {
 	guardrailActionTotal.WithLabelValues(name, action).Inc()
 }
 
+var (
+	cacheHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "flock_cache_hits_total",
+		Help: "Response cache hits per endpoint path.",
+	}, []string{"path"})
+
+	cacheMissesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "flock_cache_misses_total",
+		Help: "Response cache misses per endpoint path.",
+	}, []string{"path"})
+)
+
+// ObserveCacheHit records a response-cache hit on the given endpoint.
+func ObserveCacheHit(path string) { cacheHitsTotal.WithLabelValues(path).Inc() }
+
+// ObserveCacheMiss records a response-cache miss on the given endpoint.
+func ObserveCacheMiss(path string) { cacheMissesTotal.WithLabelValues(path).Inc() }
+
 // ObserveStickyOutcome bumps the per-outcome counter for sticky-session
 // behavior. outcome ∈ {"hit", "miss", "expired"}.
 func ObserveStickyOutcome(outcome string) {

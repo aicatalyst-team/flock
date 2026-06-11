@@ -140,6 +140,18 @@ type ObservabilityConfig struct {
 	// intervening. Post mode is reserved for a follow-up — see the
 	// CHANGELOG for the streaming-response design limitation.
 	Guardrails []GuardrailConfig `yaml:"guardrails"`
+
+	// ResponseCache stores deterministic responses (embeddings today;
+	// chat completions to follow). Disabled when Enabled=false.
+	ResponseCache ResponseCacheConfig `yaml:"response_cache"`
+}
+
+// ResponseCacheConfig configures the response cache.
+type ResponseCacheConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	Driver            string `yaml:"driver"`             // memory | sqlite
+	MaxEntries        int    `yaml:"max_entries"`        // memory only; 0 = 1000
+	DefaultTTLSeconds int    `yaml:"default_ttl_seconds"` // 0 = 24h
 }
 
 // GuardrailConfig is one row from the observability.guardrails list.

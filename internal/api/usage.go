@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/cache"
 	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/guardrails"
@@ -100,6 +101,17 @@ var globalGuardrails *guardrails.Registry
 // SetGuardrails wires the registry. Called from the controlplane at
 // startup.
 func SetGuardrails(r *guardrails.Registry) { globalGuardrails = r }
+
+// globalResponseCache is the configured response cache (memory or
+// SQLite). nil = caching disabled; handler hot paths short-circuit.
+var globalResponseCache cache.Cache
+
+// SetResponseCache wires the response cache. Called from controlplane
+// startup; passing nil disables caching.
+func SetResponseCache(c cache.Cache) { globalResponseCache = c }
+
+// ResponseCache returns the configured cache (or nil).
+func ResponseCache() cache.Cache { return globalResponseCache }
 
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already

@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/cache"
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/metrics"
 )
 
 // ---- /v1/embeddings ----
@@ -49,9 +54,36 @@ type embeddingResponse struct {
 // Embeddings handles POST /v1/embeddings.
 func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// Read the body once so we can also build a deterministic cache
+	// key from it. Embedding requests are bounded in size (token-list
+	// rather than a streaming attachment) so the double-buffering is
+	// cheap.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+		return
+	}
+
+	// Cache lookup: embeddings are deterministic for fixed
+	// (model, input), so this is the highest-ROI cache path. Skipped
+	// when Cache-Control: no-cache / no-store is set, or when the
+	// global cache isn't configured.
+	if globalResponseCache != nil && !cacheBypass(r) {
+		key := cache.KeyForRequest("/v1/embeddings", body, cacheNamespaceFromBody(body))
+		if v, ok := globalResponseCache.Get(r.Context(), key); ok {
+			metrics.ObserveCacheHit("embeddings")
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Flock-Cache", "hit")
+			_, _ = w.Write(v)
+			return
+		}
+		// Stash the key for later (post-handler) Set.
+		r = r.WithContext(withEmbeddingCacheKey(r.Context(), key))
+		metrics.ObserveCacheMiss("embeddings")
+	}
 
 	var req embeddingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return
 	}
@@ -128,8 +160,54 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	recordUsage(r.Context(), h.Store, "openai", requested, u, time.Since(start), "ok")
 
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "encode_error", err.Error())
+		return
+	}
+	if globalResponseCache != nil {
+		if key, ok := embeddingCacheKeyFrom(r.Context()); ok {
+			globalResponseCache.Set(r.Context(), key, encoded, 0) // use driver default TTL
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	w.Header().Set("X-Flock-Cache", "miss")
+	_, _ = w.Write(encoded)
+}
+
+// cacheBypass honors RFC-7234 Cache-Control directives for opt-out.
+func cacheBypass(r *http.Request) bool {
+	cc := r.Header.Get("Cache-Control")
+	if cc == "" {
+		return false
+	}
+	cc = strings.ToLower(cc)
+	return strings.Contains(cc, "no-cache") || strings.Contains(cc, "no-store")
+}
+
+// cacheNamespaceFromBody pulls flock.cache.namespace from a JSON
+// body. Falls back to "" — the cache key is still unique per body.
+func cacheNamespaceFromBody(body []byte) string {
+	var probe struct {
+		Flock struct {
+			Cache struct {
+				Namespace string `json:"namespace"`
+			} `json:"cache"`
+		} `json:"flock"`
+	}
+	_ = json.Unmarshal(body, &probe)
+	return probe.Flock.Cache.Namespace
+}
+
+type embeddingCacheKey struct{}
+
+func withEmbeddingCacheKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, embeddingCacheKey{}, key)
+}
+
+func embeddingCacheKeyFrom(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(embeddingCacheKey{}).(string)
+	return v, ok && v != ""
 }
 
 // parseEmbeddingInput accepts the OpenAI `input` field — either a single
