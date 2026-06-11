@@ -46,6 +46,12 @@ type Store interface {
 // unlimited (the default for legacy keys). Enforced by
 // api.RateLimitMiddleware via in-memory leaky buckets; resets on
 // leader restart.
+//
+// ExpiresAt, when non-zero, makes the key time-limited: the auth
+// middleware refuses requests with HTTP 401 `key_expired` once `now >
+// expires_at`. Zero (the default for legacy keys) means "never
+// expires". Useful for short-lived per-PR keys and external-contractor
+// access.
 type APIKey struct {
 	ID               string
 	Hash             string
@@ -57,6 +63,7 @@ type APIKey struct {
 	TPMLimit         int
 	AllowedModels    []string
 	CreatedAt        time.Time
+	ExpiresAt        time.Time
 	Revoked          bool
 }
 
@@ -75,6 +82,10 @@ type APIKeyStore interface {
 	// fields are set atomically so a partial edit can't accidentally
 	// leave one ceiling set and the other clear.
 	UpdateRateLimits(ctx context.Context, id string, rpm, tpm int) error
+	// UpdateExpiresAt sets the key's expiry. A zero time clears the
+	// expiry ("never expires"); a past time effectively expires the
+	// key immediately.
+	UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error
 }
 
 type Model struct {
@@ -331,10 +342,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
     rpm_limit           INTEGER NOT NULL DEFAULT 0,
     tpm_limit           INTEGER NOT NULL DEFAULT 0,
     allowed_models      TEXT,
+    expires_at          INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL,
     revoked             INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_expires ON api_keys(expires_at) WHERE expires_at > 0;
 
 CREATE TABLE IF NOT EXISTS models (
     id           TEXT PRIMARY KEY,
@@ -452,6 +465,8 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// v0.8 — per-call $ cost. 0 default — pre-migration rows have no
 		// cost recorded.
 		{table: "usage", column: "cost_usd", ddl: `ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`},
+		// v0.8 — per-key expiry. 0 = never expires (legacy default).
+		{table: "api_keys", column: "expires_at", ddl: `ALTER TABLE api_keys ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
@@ -510,10 +525,10 @@ func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
 		return fmt.Errorf("encode allowed_models: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, created_at, revoked)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		k.ID, k.Hash, k.Name, k.Scope, k.UserID, k.QuotaDailyTokens, k.RPMLimit, k.TPMLimit, allowed,
-		k.CreatedAt.Unix(), boolToInt(k.Revoked)); err != nil {
+		unixOrZero(k.ExpiresAt), k.CreatedAt.Unix(), boolToInt(k.Revoked)); err != nil {
 		return fmt.Errorf("insert api_key: %w", err)
 	}
 	return nil
@@ -521,14 +536,14 @@ func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
 
 func (s *sqliteAPIKeys) GetByHash(ctx context.Context, hash string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, created_at, revoked
 		 FROM api_keys WHERE hash = ?`, hash)
 	return scanKey(row)
 }
 
 func (s *sqliteAPIKeys) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, created_at, revoked
 		 FROM api_keys WHERE id = ?`, id)
 	return scanKey(row)
 }
@@ -536,15 +551,19 @@ func (s *sqliteAPIKeys) GetByID(ctx context.Context, id string) (*APIKey, error)
 func scanKey(row *sql.Row) (*APIKey, error) {
 	var k APIKey
 	var ts int64
+	var expiresAt int64
 	var rev int
 	var allowed sql.NullString
-	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &ts, &rev); err != nil {
+	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &expiresAt, &ts, &rev); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scan api_key: %w", err)
 	}
 	k.CreatedAt = time.Unix(ts, 0)
+	if expiresAt > 0 {
+		k.ExpiresAt = time.Unix(expiresAt, 0)
+	}
 	k.Revoked = rev != 0
 	if list, err := unmarshalAllowed(allowed); err != nil {
 		return nil, fmt.Errorf("decode allowed_models: %w", err)
@@ -556,7 +575,7 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 
 func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, created_at, revoked
 		 FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query api_keys: %w", err)
@@ -566,12 +585,16 @@ func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 	for rows.Next() {
 		var k APIKey
 		var ts int64
+		var expiresAt int64
 		var rev int
 		var allowed sql.NullString
-		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &ts, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &expiresAt, &ts, &rev); err != nil {
 			return nil, fmt.Errorf("scan api_key: %w", err)
 		}
 		k.CreatedAt = time.Unix(ts, 0)
+		if expiresAt > 0 {
+			k.ExpiresAt = time.Unix(expiresAt, 0)
+		}
 		k.Revoked = rev != 0
 		if list, err := unmarshalAllowed(allowed); err != nil {
 			return nil, fmt.Errorf("decode allowed_models: %w", err)
@@ -583,10 +606,33 @@ func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 	return out, rows.Err()
 }
 
+// unixOrZero converts a time to its unix timestamp, returning 0 for the
+// zero time. Used at write time so a "never expires" record stores 0
+// in the column rather than a sentinel like INT_MAX.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
+
 func (s *sqliteAPIKeys) Revoke(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked = 1 WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("revoke api_key: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteAPIKeys) UpdateExpiresAt(ctx context.Context, id string, expiresAt time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET expires_at = ? WHERE id = ?`,
+		unixOrZero(expiresAt), id)
+	if err != nil {
+		return fmt.Errorf("update expires_at: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", id)
 	}
 	return nil
 }

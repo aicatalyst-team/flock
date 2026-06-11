@@ -23,6 +23,11 @@ func cmdToken(args []string) {
 			"flock token create alice --models qwen-coder-7b     # restrict to one model",
 			"flock token create bob   --models 'claude-*,gpt-*'  # vendor families via glob",
 			"flock token create alice --rpm 60 --tpm 100000      # per-minute ceilings",
+			"flock token create alice --ttl 7d                   # auto-expire in 7 days",
+			"flock token create alice --expires-at 2026-07-01    # absolute expiry date",
+			"flock token expire k_abc                            # expire immediately",
+			"flock token expire k_abc --in 1h                    # expire in 1 hour",
+			"flock token renew  k_abc --ttl 30d                  # extend expiry by 30 days from now",
 			"flock token create --node                           # one-time join token for a new worker",
 			"flock token edit k_abc123 --add-model qwen3-14b     # extend the allowlist",
 			"flock token edit k_abc123 --remove-model gpt-4o     # tighten the allowlist",
@@ -41,6 +46,7 @@ func cmdToken(args []string) {
 			"`--models` accepts a comma-separated list. Entries support a `*` suffix wildcard (`claude-*`).",
 			"A key with no allowlist can call any model. An empty allowlist (`--set-models ''`) denies every model.",
 			"`--rpm` (requests/min) and `--tpm` (tokens/min) are in-memory leaky buckets; reset on leader restart. 0 = unlimited.",
+			"`--ttl` accepts Go-style durations (`30s`, `5m`, `2h`) plus `d` for days (`7d`). `--expires-at` is YYYY-MM-DD or RFC3339.",
 		},
 	}
 	if len(args) == 0 {
@@ -55,6 +61,7 @@ func cmdToken(args []string) {
 		scope := "user"
 		var models []string
 		rpm, tpm := 0, 0
+		var expiresAt time.Time
 		for i := 1; i < len(args); i++ {
 			a := args[i]
 			switch a {
@@ -80,6 +87,24 @@ func cmdToken(args []string) {
 					tpm = parseIntFlag(args[i+1], "--tpm")
 					i++
 				}
+			case "--ttl":
+				if i+1 < len(args) {
+					d, err := parseFlexibleDuration(args[i+1])
+					if err != nil {
+						die("invalid --ttl: %v", err)
+					}
+					expiresAt = time.Now().Add(d)
+					i++
+				}
+			case "--expires-at":
+				if i+1 < len(args) {
+					t, err := parseFlexibleDate(args[i+1])
+					if err != nil {
+						die("invalid --expires-at: %v", err)
+					}
+					expiresAt = t
+					i++
+				}
 			default:
 				if strings.HasPrefix(a, "--models=") {
 					models = parseModelList(strings.TrimPrefix(a, "--models="))
@@ -93,17 +118,43 @@ func cmdToken(args []string) {
 					tpm = parseIntFlag(strings.TrimPrefix(a, "--tpm="), "--tpm")
 					continue
 				}
+				if strings.HasPrefix(a, "--ttl=") {
+					d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
+					if err != nil {
+						die("invalid --ttl: %v", err)
+					}
+					expiresAt = time.Now().Add(d)
+					continue
+				}
+				if strings.HasPrefix(a, "--expires-at=") {
+					t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
+					if err != nil {
+						die("invalid --expires-at: %v", err)
+					}
+					expiresAt = t
+					continue
+				}
 				if name == "default" {
 					name = a
 				}
 			}
 		}
-		tokenCreate(name, scope, models, rpm, tpm)
+		tokenCreate(name, scope, models, rpm, tpm, expiresAt)
 	case "edit":
 		if len(args) < 2 {
 			die("usage: flock token edit <id> --add-model X | --remove-model Y | --set-models a,b,c | --clear-models")
 		}
 		tokenEdit(args[1], args[2:])
+	case "expire":
+		if len(args) < 2 {
+			die("usage: flock token expire <id> [--in DURATION]")
+		}
+		tokenExpire(args[1], args[2:])
+	case "renew":
+		if len(args) < 2 {
+			die("usage: flock token renew <id> --ttl DURATION | --expires-at DATE")
+		}
+		tokenRenew(args[1], args[2:])
 	case "budget":
 		tokenBudget(args[1:])
 	case "ls", "list":
@@ -150,7 +201,7 @@ func parseModelList(s string) []string {
 	return out
 }
 
-func tokenCreate(name, scope string, models []string, rpm, tpm int) {
+func tokenCreate(name, scope string, models []string, rpm, tpm int, expiresAt time.Time) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
@@ -167,6 +218,7 @@ func tokenCreate(name, scope string, models []string, rpm, tpm int) {
 	rec.AllowedModels = models
 	rec.RPMLimit = rpm
 	rec.TPMLimit = tpm
+	rec.ExpiresAt = expiresAt
 	if err := st.APIKeys().Create(context.Background(), rec); err != nil {
 		die("persist key: %v", err)
 	}
@@ -177,9 +229,150 @@ func tokenCreate(name, scope string, models []string, rpm, tpm int) {
 	if rpm > 0 || tpm > 0 {
 		fmt.Printf("  rpm: %s · tpm: %s\n", limitStr(rpm), limitStr(tpm))
 	}
+	if !expiresAt.IsZero() {
+		fmt.Printf("  expires: %s (in %s)\n", expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
+	}
 	fmt.Println()
 	fmt.Println("  Key (shown once — store it now):")
 	fmt.Printf("    %s\n", plain)
+}
+
+// tokenExpire pushes a key's expiry to a specific point in time. With
+// no flag the key expires immediately (the next request gets 401
+// key_expired). `--in DURATION` sets the expiry to now + duration.
+func tokenExpire(id string, args []string) {
+	expiresAt := time.Now() // default: expire now
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--in":
+			if i+1 >= len(args) {
+				die("--in requires a duration (e.g. 1h, 30m, 7d)")
+			}
+			d, err := parseFlexibleDuration(args[i+1])
+			if err != nil {
+				die("invalid --in: %v", err)
+			}
+			expiresAt = time.Now().Add(d)
+			i++
+		default:
+			if strings.HasPrefix(a, "--in=") {
+				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--in="))
+				if err != nil {
+					die("invalid --in: %v", err)
+				}
+				expiresAt = time.Now().Add(d)
+				continue
+			}
+			die("unknown flag: %s", a)
+		}
+	}
+	cfg := loadConfigOrExit()
+	st := openStoreOrExit(cfg)
+	defer st.Close()
+	if err := st.APIKeys().UpdateExpiresAt(context.Background(), id, expiresAt); err != nil {
+		die("update expires_at: %v", err)
+	}
+	if expiresAt.Before(time.Now().Add(time.Second)) {
+		ok(os.Stdout, "%s: expired immediately", id)
+	} else {
+		ok(os.Stdout, "%s: will expire at %s (in %s)", id,
+			expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
+	}
+}
+
+// tokenRenew extends a key's expiry by --ttl from NOW (not from the
+// existing expiry) so a forgotten renewal stays predictable.
+// `--expires-at` is also supported for absolute dates.
+func tokenRenew(id string, args []string) {
+	var expiresAt time.Time
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--ttl":
+			if i+1 >= len(args) {
+				die("--ttl requires a duration")
+			}
+			d, err := parseFlexibleDuration(args[i+1])
+			if err != nil {
+				die("invalid --ttl: %v", err)
+			}
+			expiresAt = time.Now().Add(d)
+			i++
+		case "--expires-at":
+			if i+1 >= len(args) {
+				die("--expires-at requires YYYY-MM-DD or RFC3339")
+			}
+			t, err := parseFlexibleDate(args[i+1])
+			if err != nil {
+				die("invalid --expires-at: %v", err)
+			}
+			expiresAt = t
+			i++
+		default:
+			if strings.HasPrefix(a, "--ttl=") {
+				d, err := parseFlexibleDuration(strings.TrimPrefix(a, "--ttl="))
+				if err != nil {
+					die("invalid --ttl: %v", err)
+				}
+				expiresAt = time.Now().Add(d)
+				continue
+			}
+			if strings.HasPrefix(a, "--expires-at=") {
+				t, err := parseFlexibleDate(strings.TrimPrefix(a, "--expires-at="))
+				if err != nil {
+					die("invalid --expires-at: %v", err)
+				}
+				expiresAt = t
+				continue
+			}
+			die("unknown flag: %s", a)
+		}
+	}
+	if expiresAt.IsZero() {
+		die("renew needs --ttl or --expires-at")
+	}
+	cfg := loadConfigOrExit()
+	st := openStoreOrExit(cfg)
+	defer st.Close()
+	if err := st.APIKeys().UpdateExpiresAt(context.Background(), id, expiresAt); err != nil {
+		die("update expires_at: %v", err)
+	}
+	ok(os.Stdout, "%s: renewed — expires %s (in %s)", id,
+		expiresAt.Format(time.RFC3339), time.Until(expiresAt).Round(time.Second))
+}
+
+// parseFlexibleDuration accepts standard Go durations ("30s", "5m",
+// "2h") plus a `d` (days) extension that the stdlib doesn't.
+// "7d" → 7×24h.
+func parseFlexibleDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty")
+	}
+	if strings.HasSuffix(s, "d") {
+		nStr := strings.TrimSuffix(s, "d")
+		n, err := strconv.Atoi(nStr)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("invalid days: %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
+}
+
+// parseFlexibleDate accepts YYYY-MM-DD or RFC3339. Dates are treated
+// as midnight UTC so `--expires-at 2026-07-01` means the very start of
+// July 1.
+func parseFlexibleDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("expected YYYY-MM-DD or RFC3339, got %q", s)
 }
 
 func limitStr(n int) string {

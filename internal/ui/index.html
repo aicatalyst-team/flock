@@ -1801,12 +1801,13 @@ async function renderTokens() {
       renderRateLimit(k.rpm_limit, "rpm"),
       renderRateLimit(k.tpm_limit, "tpm"),
       renderAllowedModels(k.allowed_models),
-      k.revoked ? `<span class="pill pill-err">revoked</span>` : `<span class="pill pill-ok">active</span>`,
+      renderTokenStatus(k),
       new Date(k.created_at).toLocaleString(),
       k.revoked ? "" : `<div class="flex gap-2 flex-wrap">
         <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${k.id}', ${JSON.stringify(k.allowed_models || []).replace(/"/g, '&quot;')}, ${k.allowed_models == null})">models…</button>
         <button class="text-xs text-slate-700 hover:underline" onclick="editTokenRates('${k.id}', ${k.rpm_limit || 0}, ${k.tpm_limit || 0})">rates…</button>
         <button class="text-xs text-slate-700 hover:underline" onclick="manageBudgets('${k.id}')">budgets…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenExpiry('${k.id}', '${k.expires_at || ''}')">expiry…</button>
         <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>
       </div>`,
     ]);
@@ -1861,6 +1862,25 @@ async function renderTokens() {
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
+}
+
+// renderTokenStatus combines the revoke / expiry / active state into a
+// single cell. Revoked wins; otherwise an expired key shows the expiry
+// badge, a soon-to-expire key shows a warn badge with N days left, and
+// everything else is "active". Soon = ≤ 7 days.
+function renderTokenStatus(k) {
+  if (k.revoked) return `<span class="pill pill-err">revoked</span>`;
+  if (!k.expires_at) return `<span class="pill pill-ok">active</span>`;
+  const expires = new Date(k.expires_at);
+  const now = Date.now();
+  if (expires.getTime() <= now) {
+    return `<span class="pill pill-err" title="${expires.toLocaleString()}">expired</span>`;
+  }
+  const daysLeft = Math.ceil((expires.getTime() - now) / 86400000);
+  if (daysLeft <= 7) {
+    return `<span class="pill pill-warn" title="${expires.toLocaleString()}">expires in ${daysLeft}d</span>`;
+  }
+  return `<span class="pill pill-ok" title="${expires.toLocaleString()}">active · ${daysLeft}d</span>`;
 }
 
 // renderRateLimit renders an RPM/TPM cell — "∞" when unlimited,
@@ -1945,6 +1965,69 @@ async function editTokenAllowlist(id, currentList, isUnrestricted) {
   } catch (e) {
     toast(`Update failed: ${e.message}`, "err");
   }
+}
+
+// editTokenExpiry presents the user with three explicit options:
+// extend by a duration ("ttl"), set an absolute date, or clear the
+// expiry entirely. Each is a separate field so the UI doesn't make
+// the user choose a mental model.
+async function editTokenExpiry(id, currentISO) {
+  const current = currentISO ? new Date(currentISO).toLocaleString() : "never expires";
+  const fields = [
+    { name: "mode", label: "What to do", type: "select", value: "ttl", options: [
+      { value: "ttl",   label: "Extend by duration from now" },
+      { value: "abs",   label: "Set absolute expiry date" },
+      { value: "clear", label: "Clear (never expires)" },
+    ]},
+    { name: "ttl", label: "Duration (e.g. 7d, 24h, 30m)", type: "text", value: "30d", placeholder: "30d", help: "Used when mode = ttl" },
+    { name: "abs", label: "Expires at (YYYY-MM-DD)", type: "text", value: "", placeholder: "2026-07-01", help: "Used when mode = abs" },
+  ];
+  const out = await flockForm({
+    title: `Expiry — ${id}`,
+    body: `Currently: <code>${current}</code>`,
+    fields,
+    confirmLabel: "Save",
+  });
+  if (!out) return;
+  const body = {};
+  if (out.mode === "ttl") {
+    const d = parseTTL(out.ttl);
+    if (!d) { toast("Invalid duration", "err"); return; }
+    body.ttl_seconds = Math.floor(d / 1000);
+  } else if (out.mode === "abs") {
+    const t = new Date(out.abs);
+    if (Number.isNaN(t.getTime())) { toast("Invalid date", "err"); return; }
+    body.expires_at = t.toISOString();
+  } else {
+    body.expires_at = null;
+  }
+  try {
+    await api(`/admin/v1/tokens/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    toast(`Updated expiry for ${id}`, "ok");
+    await renderTokens();
+  } catch (e) {
+    toast(`Update failed: ${e.message}`, "err");
+  }
+}
+
+// parseTTL mirrors the Go-side parseFlexibleDuration: standard
+// durations (1h, 30m, 30s) plus `d` (days). Returns ms or null on
+// invalid input.
+function parseTTL(s) {
+  s = (s || "").trim();
+  const m = s.match(/^(\d+)(s|m|h|d)$/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  switch (m[2]) {
+    case "s": return n * 1000;
+    case "m": return n * 60_000;
+    case "h": return n * 3_600_000;
+    case "d": return n * 86_400_000;
+  }
+  return null;
 }
 
 // manageBudgets opens a small modal listing current budgets for a key

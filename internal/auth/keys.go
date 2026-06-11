@@ -80,6 +80,11 @@ func Middleware(keys store.APIKeyStore, requireKeys bool) func(http.Handler) htt
 				writeError(w, http.StatusUnauthorized, "invalid_api_key", "Invalid or revoked API key")
 				return
 			}
+			if !key.ExpiresAt.IsZero() && time.Now().After(key.ExpiresAt) {
+				writeError(w, http.StatusUnauthorized, "key_expired",
+					"API key expired at "+key.ExpiresAt.UTC().Format(time.RFC3339))
+				return
+			}
 			ctx := context.WithValue(r.Context(), ctxKeyAPIKey, key)
 			ctx = context.WithValue(ctx, ctxKeyScope, key.Scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
