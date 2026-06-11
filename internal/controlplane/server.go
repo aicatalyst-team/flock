@@ -99,6 +99,11 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			time.Duration(cfg.Router.PlacementCooldownSeconds)*time.Second,
 		)
 	}
+	// Sticky sessions: pin (user_id, model) to its last worker for the
+	// TTL so multi-turn chats reuse KV cache. Disabled when ttl == 0.
+	if cfg.Router.StickySessionTTLSeconds > 0 {
+		routed.SetStickyTTL(time.Duration(cfg.Router.StickySessionTTLSeconds) * time.Second)
+	}
 
 	openaiH := &api.Handler{
 		Engine:  routed,

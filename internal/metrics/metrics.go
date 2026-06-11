@@ -67,7 +67,18 @@ var (
 		Name: "flock_router_cooldowns_active",
 		Help: "Number of worker nodes currently in the placement-cooldown penalty box.",
 	})
+
+	routerStickyOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "flock_router_sticky_hits_total",
+		Help: "Per-(user_id, model) session stickiness outcomes (hit|miss|expired). 'hit' = the previously-pinned worker served this request; 'miss' = no fresh pin existed; 'expired' = pin existed but the TTL had passed.",
+	}, []string{"outcome"})
 )
+
+// ObserveStickyOutcome bumps the per-outcome counter for sticky-session
+// behavior. outcome ∈ {"hit", "miss", "expired"}.
+func ObserveStickyOutcome(outcome string) {
+	routerStickyOutcomes.WithLabelValues(outcome).Inc()
+}
 
 // SetRouterCooldownsActive sets the gauge for placements currently in
 // the cooldown penalty box. Called from the Router whenever a node

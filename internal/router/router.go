@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/metrics"
 	"github.com/hadihonarvar/flock/internal/store"
@@ -120,11 +121,28 @@ type Router struct {
 	placementAllowedFails int
 	placementCooldownDur  time.Duration
 
-	mu        sync.RWMutex
-	inflight  map[string]int            // node_id → live request count
-	remotes   map[string]engines.Engine // node_id → cached remote engine
-	cooldowns map[string]time.Time      // node_id → time the node leaves the penalty box
-	failures  map[string]int            // node_id → consecutive recent failures
+	// Sticky sessions: when stickyTTL > 0 the router pins a
+	// (user_id, model) tuple to the worker that served its previous
+	// successful request, so multi-turn chats reuse the same node's
+	// KV cache. The entry refreshes on each successful pick and
+	// expires after stickyTTL of inactivity. Bypassed for requests
+	// with no user_id (`auth.KeyFrom(ctx) == nil` — typically dev
+	// mode without keys) and for the synthetic `auto` model id (the
+	// effective resolved model may change between turns).
+	stickyTTL time.Duration
+
+	mu          sync.RWMutex
+	inflight    map[string]int            // node_id → live request count
+	remotes     map[string]engines.Engine // node_id → cached remote engine
+	cooldowns   map[string]time.Time      // node_id → time the node leaves the penalty box
+	failures    map[string]int            // node_id → consecutive recent failures
+	stickiness  map[string]stickyEntry    // user_id|model → pinned node + expiry
+}
+
+// stickyEntry is one row of the per-(user_id, model) pin table.
+type stickyEntry struct {
+	NodeID    string
+	ExpiresAt time.Time
 }
 
 // New constructs a Router that wraps the local engine and consults the store
@@ -135,11 +153,27 @@ func New(local engines.Engine, st store.Store) *Router {
 		store:     st,
 		localNode: "local",
 		log:       slog.Default(),
-		inflight:  make(map[string]int),
-		remotes:   make(map[string]engines.Engine),
-		cooldowns: make(map[string]time.Time),
-		failures:  make(map[string]int),
-		latency:   newLatencyStats(LatencyConfig{}),
+		inflight:   make(map[string]int),
+		remotes:    make(map[string]engines.Engine),
+		cooldowns:  make(map[string]time.Time),
+		failures:   make(map[string]int),
+		stickiness: make(map[string]stickyEntry),
+		latency:    newLatencyStats(LatencyConfig{}),
+	}
+}
+
+// SetStickyTTL turns on per-(user_id, model) session stickiness with
+// the given TTL. The router prefers the previously-picked worker for
+// each tuple until the TTL elapses without activity, so multi-turn
+// chats reuse the same node's KV cache.
+//
+// 0 (default) disables the feature — pick() behaves exactly as before.
+// Recommended range: 60s–600s. Too low and the cache benefit
+// disappears between turns; too high and load can stay lopsided after
+// a session ends.
+func (r *Router) SetStickyTTL(d time.Duration) {
+	if d >= 0 {
+		r.stickyTTL = d
 	}
 }
 
@@ -475,6 +509,88 @@ func (r *Router) inCooldown(nodeID string) bool {
 		return false
 	}
 	return true
+}
+
+// stickyPick returns the pinned node id for (user_id, model) when the
+// pin is fresh, or "" when there's nothing to suggest. Bypassed for
+// requests with no user_id and for the synthetic `auto` model id.
+func (r *Router) stickyPick(ctx context.Context, model string) string {
+	if r.stickyTTL <= 0 || model == "" || model == "auto" {
+		return ""
+	}
+	userID := userIDFor(ctx)
+	if userID == "" {
+		return ""
+	}
+	key := userID + "|" + model
+	r.mu.RLock()
+	entry, ok := r.stickiness[key]
+	r.mu.RUnlock()
+	if !ok {
+		metrics.ObserveStickyOutcome("miss")
+		return ""
+	}
+	if time.Now().After(entry.ExpiresAt) {
+		r.mu.Lock()
+		// Re-check under write lock — another goroutine may have
+		// already refreshed in the window.
+		if e2, ok := r.stickiness[key]; ok && time.Now().After(e2.ExpiresAt) {
+			delete(r.stickiness, key)
+		}
+		r.mu.Unlock()
+		metrics.ObserveStickyOutcome("expired")
+		return ""
+	}
+	return entry.NodeID
+}
+
+// rememberSticky refreshes the (user_id, model) → node pin on each
+// successful pick. The next request for the same tuple within stickyTTL
+// will land on the same node (assuming it's still healthy).
+func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
+	if r.stickyTTL <= 0 || model == "" || model == "auto" || nodeID == "" {
+		return
+	}
+	userID := userIDFor(ctx)
+	if userID == "" {
+		return
+	}
+	key := userID + "|" + model
+	r.mu.Lock()
+	r.stickiness[key] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(r.stickyTTL)}
+	r.mu.Unlock()
+}
+
+// userIDFor returns the authenticated user id from ctx, or "" when no
+// auth key is attached (dev mode with require_keys=false). Stickiness
+// is disabled for the anonymous case.
+func userIDFor(ctx context.Context) string {
+	if k := auth.KeyFrom(ctx); k != nil {
+		return k.UserID
+	}
+	return ""
+}
+
+// preferNode reorders `workers` so that `nodeID` is first if it's
+// present. Other entries keep their existing relative order — this
+// only nudges the sticky node to the front of the line, not the rest.
+func preferNode(workers []store.Placement, nodeID string) []store.Placement {
+	if len(workers) == 0 {
+		return workers
+	}
+	for i, w := range workers {
+		if w.NodeID == nodeID {
+			if i == 0 {
+				return workers
+			}
+			out := make([]store.Placement, 0, len(workers))
+			out = append(out, workers[i])
+			out = append(out, workers[:i]...)
+			out = append(out, workers[i+1:]...)
+			return out
+		}
+	}
+	return workers
 }
 
 // CooldownUntil returns the time at which `nodeID` exits the penalty
@@ -872,6 +988,16 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	})
 	r.mu.RUnlock()
 
+	// 3a. Sticky pin: if there's a fresh (user_id, model) entry whose
+	// node is still in the workers list AND not in cooldown, surface
+	// it to the front of the sorted slice so it's tried before the
+	// least-loaded candidate. KV-cache locality outweighs a small
+	// inflight delta on the alternative.
+	stickyNode := r.stickyPick(ctx, model)
+	if stickyNode != "" {
+		workers = preferNode(workers, stickyNode)
+	}
+
 	// Walk the sorted list: skip any worker whose heartbeat is stale
 	// before falling back to local. Without this, a request to a model
 	// that's still in the placements table for a dead node would wait
@@ -900,7 +1026,13 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 			continue
 		}
 		eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
+		stickyOutcome := "miss"
+		if stickyNode != "" && node.ID == stickyNode {
+			stickyOutcome = "hit"
+		}
+		r.rememberSticky(ctx, model, node.ID)
 		metrics.ObserveRouterPick("worker", "ok")
+		metrics.ObserveStickyOutcome(stickyOutcome)
 		return eng, node.ID, nil
 	}
 	// All workers exhausted (all dead or stale). Fall back to local — it

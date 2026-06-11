@@ -48,9 +48,13 @@ type EngineConfig struct {
 }
 
 type RouterConfig struct {
-	DefaultModel   string         `yaml:"default_model"`
-	StickySessions bool           `yaml:"sticky_sessions"`
-	Fallback       FallbackConfig `yaml:"fallback"`
+	DefaultModel string `yaml:"default_model"`
+	// StickySessions is the legacy boolean. Now superseded by
+	// StickySessionTTLSeconds — keep parseable for old configs but the
+	// new field is the source of truth.
+	StickySessions          bool           `yaml:"sticky_sessions"`
+	StickySessionTTLSeconds int            `yaml:"sticky_session_ttl_seconds"`
+	Fallback                FallbackConfig `yaml:"fallback"`
 
 	// LatencyFallbackP95Seconds enables ROADMAP Bet #1 (latency-aware
 	// fallback). When the rolling p95 latency for a primary model exceeds
@@ -246,6 +250,11 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("FLOCK_PLACEMENT_COOLDOWN_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.Router.PlacementCooldownSeconds = n
+		}
+	}
+	if v := os.Getenv("FLOCK_STICKY_SESSION_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.Router.StickySessionTTLSeconds = n
 		}
 	}
 }
