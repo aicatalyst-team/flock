@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,9 +109,22 @@ type Router struct {
 	// metrics, but no reordering).
 	latency *latencyStats
 
-	mu       sync.RWMutex
-	inflight map[string]int            // node_id → live request count
-	remotes  map[string]engines.Engine // node_id → cached remote engine
+	// Placement cooldown ("penalty box"): a worker node that errors
+	// `placementAllowedFails` times in a row is parked for
+	// `placementCooldownDur` so pick() skips it instead of routing
+	// fresh requests to a flaky engine. Per-node, in-memory only;
+	// reset on leader restart (the next request will re-prove the
+	// node). Cooldown applies only to remote workers; the local
+	// engine never enters cooldown (a flaky local engine is a
+	// different operational problem).
+	placementAllowedFails int
+	placementCooldownDur  time.Duration
+
+	mu        sync.RWMutex
+	inflight  map[string]int            // node_id → live request count
+	remotes   map[string]engines.Engine // node_id → cached remote engine
+	cooldowns map[string]time.Time      // node_id → time the node leaves the penalty box
+	failures  map[string]int            // node_id → consecutive recent failures
 }
 
 // New constructs a Router that wraps the local engine and consults the store
@@ -123,8 +137,25 @@ func New(local engines.Engine, st store.Store) *Router {
 		log:       slog.Default(),
 		inflight:  make(map[string]int),
 		remotes:   make(map[string]engines.Engine),
+		cooldowns: make(map[string]time.Time),
+		failures:  make(map[string]int),
 		latency:   newLatencyStats(LatencyConfig{}),
 	}
+}
+
+// SetPlacementCooldown configures the per-node circuit-breaker. After
+// `allowedFails` consecutive engine errors from the same worker, pick()
+// skips the node for `cooldown` before retrying. A single success after
+// cooldown expires resets the counter.
+//
+// Both values must be > 0 to enable the feature. Either zero (the
+// default) disables it — pick() behaves exactly as before.
+func (r *Router) SetPlacementCooldown(allowedFails int, cooldown time.Duration) {
+	if allowedFails < 0 || cooldown < 0 {
+		return
+	}
+	r.placementAllowedFails = allowedFails
+	r.placementCooldownDur = cooldown
 }
 
 // SetLogger swaps in a structured logger for fallback + pick events.
@@ -335,6 +366,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 			r.incInflight(nodeID)
 			res, err := ee.Embed(attemptCtx, attempt)
 			r.decInflight(nodeID)
+			r.recordOutcome(nodeID, err == nil)
 			if err == nil {
 				attemptSpan.SetStatus(codes.Ok, "")
 				attemptSpan.End()
@@ -412,6 +444,98 @@ func (r *Router) maybeSwapTypedChain(chain []string, chains FallbackChains, err 
 		)
 	}
 	return newChain
+}
+
+// inCooldown reports whether the named node is currently in the
+// penalty box. Cheap, takes RLock — pick() checks this on every worker.
+func (r *Router) inCooldown(nodeID string) bool {
+	if r.placementCooldownDur <= 0 {
+		return false
+	}
+	r.mu.RLock()
+	until, ok := r.cooldowns[nodeID]
+	r.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		// Cooldown expired — clean up so the gauge / debug view stays
+		// honest. We don't reset failures here; the next successful
+		// call does, so a still-flaky node re-enters cooldown on the
+		// very next failure.
+		r.mu.Lock()
+		if until2, ok := r.cooldowns[nodeID]; ok && time.Now().After(until2) {
+			delete(r.cooldowns, nodeID)
+			metrics.SetRouterCooldownsActive(len(r.cooldowns))
+			if r.log != nil {
+				r.log.Info("router cooldown expired", "node", nodeID)
+			}
+		}
+		r.mu.Unlock()
+		return false
+	}
+	return true
+}
+
+// CooldownUntil returns the time at which `nodeID` exits the penalty
+// box, or a zero time if the node isn't currently in cooldown. Public
+// so the admin API can decorate the Nodes list with a "🚫 cooldown"
+// badge.
+func (r *Router) CooldownUntil(nodeID string) time.Time {
+	if r.placementCooldownDur <= 0 {
+		return time.Time{}
+	}
+	r.mu.RLock()
+	until, ok := r.cooldowns[nodeID]
+	r.mu.RUnlock()
+	if !ok || time.Now().After(until) {
+		return time.Time{}
+	}
+	return until
+}
+
+// recordOutcome notes the success/failure of an engine call from a
+// remote worker. On `allowedFails` consecutive failures the node enters
+// cooldown for `cooldownDur`. The first success after expiry resets
+// the counter, so a node that flakes once doesn't shadow itself
+// forever.
+//
+// nodeID == localNode is a no-op — cooldown only applies to remote
+// workers. (A flaky local engine is a different operational problem;
+// restart it.)
+func (r *Router) recordOutcome(nodeID string, ok bool) {
+	if r.placementCooldownDur <= 0 || r.placementAllowedFails <= 0 {
+		return
+	}
+	if nodeID == "" || nodeID == r.localNode || strings.HasPrefix(nodeID, "shard:") {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ok {
+		// Success: reset failure count if the node had any pending
+		// strikes. Don't churn the metric — we only update the gauge
+		// when entering/exiting cooldown.
+		if r.failures[nodeID] > 0 {
+			delete(r.failures, nodeID)
+		}
+		return
+	}
+	r.failures[nodeID]++
+	if r.failures[nodeID] < r.placementAllowedFails {
+		return
+	}
+	// Enter cooldown.
+	r.cooldowns[nodeID] = time.Now().Add(r.placementCooldownDur)
+	r.failures[nodeID] = 0
+	metrics.SetRouterCooldownsActive(len(r.cooldowns))
+	if r.log != nil {
+		r.log.Warn("router placement cooldown",
+			"node", nodeID,
+			"allowed_fails", r.placementAllowedFails,
+			"cooldown", r.placementCooldownDur,
+		)
+	}
 }
 
 // sameOrder returns true when two slices have identical contents in
@@ -583,10 +707,12 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			if err == nil {
 				inner = s
 				streamCancel = thisCancel
+				r.recordOutcome(nodeID, true)
 				break // stream opened — stop retrying
 			}
 			thisCancel()
 			r.decInflight(nodeID)
+			r.recordOutcome(nodeID, false)
 			lastErr = err
 		}
 		if inner == nil {
@@ -767,6 +893,10 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 					"max_age", r.heartbeatMaxAge,
 				)
 			}
+			continue
+		}
+		if r.inCooldown(node.ID) {
+			metrics.ObserveRouterPick("worker", "cooldown")
 			continue
 		}
 		eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)

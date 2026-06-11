@@ -62,7 +62,19 @@ var (
 		Help:    "Per-attempt duration in seconds (chat = start-to-stream-done, embed = full response).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
 	}, []string{"model", "outcome"})
+
+	routerCooldownsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "flock_router_cooldowns_active",
+		Help: "Number of worker nodes currently in the placement-cooldown penalty box.",
+	})
 )
+
+// SetRouterCooldownsActive sets the gauge for placements currently in
+// the cooldown penalty box. Called from the Router whenever a node
+// enters or exits cooldown.
+func SetRouterCooldownsActive(n int) {
+	routerCooldownsActive.Set(float64(n))
+}
 
 // ObserveRouterPick records a dispatch decision. Path is one of
 // local | worker | shard | fallback-to-local; outcome is ok | error | stale-heartbeat.

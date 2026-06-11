@@ -90,6 +90,15 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			P95Threshold: time.Duration(cfg.Router.LatencyFallbackP95Seconds) * time.Second,
 		})
 	}
+	// Placement cooldown ("penalty box"): a worker that errors N times
+	// in a row gets parked for the cooldown duration so pick() skips it.
+	// Both knobs must be > 0 to enable.
+	if cfg.Router.PlacementAllowedFails > 0 && cfg.Router.PlacementCooldownSeconds > 0 {
+		routed.SetPlacementCooldown(
+			cfg.Router.PlacementAllowedFails,
+			time.Duration(cfg.Router.PlacementCooldownSeconds)*time.Second,
+		)
+	}
 
 	openaiH := &api.Handler{
 		Engine:  routed,
@@ -427,7 +436,22 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, nodes)
+	// Decorate each row with cooldown_until when the router has the
+	// node in its penalty box. JSON omits the field when the time is
+	// zero so legacy clients see the unchanged shape.
+	type nodeView struct {
+		store.Node
+		CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
+	}
+	out := make([]nodeView, 0, len(nodes))
+	for _, n := range nodes {
+		v := nodeView{Node: n}
+		if t := s.router.CooldownUntil(n.ID); !t.IsZero() {
+			v.CooldownUntil = &t
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {

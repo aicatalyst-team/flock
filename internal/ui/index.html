@@ -904,17 +904,28 @@ async function renderNodes() {
   try {
     const nodes = (await api("/admin/v1/nodes")) || [];
     root.dataset.loaded = "1";
-    const rows = nodes.map((n) => [
-      `<span class="code">${n.ID}</span>`,
-      n.Hostname,
-      `${n.OS}/${n.Arch}`,
-      `${n.RAMGB} GB`,
-      n.Address || "<i class='text-slate-400'>—</i>",
-      stateBadge(n.State),
-      new Date(n.LastHeartbeat).toLocaleString(),
-      `<button class="text-xs text-amber-700 hover:underline" onclick="drainNode('${n.ID}')">drain</button>
-       <button class="text-xs text-red-600 hover:underline ml-2" onclick="removeNode('${n.ID}')">remove</button>`,
-    ]);
+    const rows = nodes.map((n) => {
+      // The router decorates rows in cooldown with `cooldown_until` so
+      // operators can see at a glance which workers are in the penalty
+      // box (the router skips them until the time passes).
+      let stateCell = stateBadge(n.State);
+      if (n.cooldown_until) {
+        const until = new Date(n.cooldown_until);
+        const secs = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        stateCell += ` <span class="text-xs ml-1 text-red-700 bg-red-50 border border-red-200 px-1.5 rounded" title="Router parked this node after consecutive errors. It will re-enter rotation at ${until.toLocaleTimeString()}.">🚫 cooldown · ${secs}s</span>`;
+      }
+      return [
+        `<span class="code">${n.ID}</span>`,
+        n.Hostname,
+        `${n.OS}/${n.Arch}`,
+        `${n.RAMGB} GB`,
+        n.Address || "<i class='text-slate-400'>—</i>",
+        stateCell,
+        new Date(n.LastHeartbeat).toLocaleString(),
+        `<button class="text-xs text-amber-700 hover:underline" onclick="drainNode('${n.ID}')">drain</button>
+         <button class="text-xs text-red-600 hover:underline ml-2" onclick="removeNode('${n.ID}')">remove</button>`,
+      ];
+    });
     root.innerHTML = `
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">Nodes</h2>

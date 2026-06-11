@@ -59,6 +59,15 @@ type RouterConfig struct {
 	// failure-only behavior. Common values: 5–10 seconds. Env override:
 	// FLOCK_LATENCY_P95_SECONDS.
 	LatencyFallbackP95Seconds int `yaml:"latency_fallback_p95_seconds"`
+
+	// PlacementAllowedFails + PlacementCooldownSeconds together drive the
+	// per-node circuit breaker. After this many consecutive engine
+	// errors from a worker, the router parks the node for the configured
+	// cooldown. Both must be > 0 to enable the feature; either zero
+	// disables it. Env overrides: FLOCK_PLACEMENT_ALLOWED_FAILS,
+	// FLOCK_PLACEMENT_COOLDOWN_SECONDS.
+	PlacementAllowedFails    int `yaml:"placement_allowed_fails"`
+	PlacementCooldownSeconds int `yaml:"placement_cooldown_seconds"`
 }
 
 type FallbackConfig struct {
@@ -227,6 +236,16 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("FLOCK_LATENCY_P95_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.Router.LatencyFallbackP95Seconds = n
+		}
+	}
+	if v := os.Getenv("FLOCK_PLACEMENT_ALLOWED_FAILS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.Router.PlacementAllowedFails = n
+		}
+	}
+	if v := os.Getenv("FLOCK_PLACEMENT_COOLDOWN_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.Router.PlacementCooldownSeconds = n
 		}
 	}
 }
