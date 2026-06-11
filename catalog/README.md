@@ -39,7 +39,9 @@ The parser is `internal/models/catalog.go`. Anything not in this schema is silen
 | `released` | string | Model's public release date in `YYYY-MM-DD` form. Lets users sort the catalog by recency and gauge how stale an entry is. Approximate is fine — use the first of the month if a precise day isn't known. Rendered in `flock model info`. |
 
 **Restricted-license tag convention.** Any entry whose license is not in the permissive set (`apache-2.0`, `mit`, `bsd-2-clause`, `bsd-3-clause`, `lfm-open`) must also carry the tag `restricted-license`. CI enforces this. Users can then `flock model search restricted-license` to find every model with extra terms, and the dashboard's Models tab renders an amber license badge instead of green.
-| `fallback` | []string | Ordered list of catalog IDs to try when this model can't serve a request (engine down, model not loaded, 503, timeout). Tried in order; the first that succeeds wins. Transparent to the client — the response carries the requested model name. Operators see hits in the audit log + stderr. |
+| `fallback` | []string | **Generic** ordered fallback list — tried when the router can't classify the primary's failure into a more specific category (engine down, model not loaded, 503, timeout). Tried in order; the first that succeeds wins. Transparent to the client — the response carries the requested model name. Operators see hits in the audit log + stderr. |
+| `fallback_on_context_length` | []string | Typed fallback — replaces `fallback` when the primary rejects with a context-length-exceeded error. Typically points at long-context variants. Empty falls through to `fallback`. |
+| `fallback_on_content_policy` | []string | Typed fallback — replaces `fallback` when the upstream (typically a vendor) refuses on content-policy grounds. Typically points at a permissively-aligned open-weight model. Empty falls through to `fallback`. |
 
 ### Source
 
@@ -187,6 +189,31 @@ fallback:
 ```
 
 When a request for `qwen3-coder-30b` can't be served (engine down, 503, timeout), the router tries the fallback chain in order. The response is returned to the client with `model: "qwen3-coder-30b"` — the fallback is invisible. Operators see the substitution in the audit log.
+
+### Model with typed fallback chains
+
+`fallback_on_context_length` and `fallback_on_content_policy` let you target the alternative that's actually appropriate for the failure class. The router classifies the primary's error before walking the chain.
+
+```yaml
+id: claude-3-5-sonnet
+display_name: Claude 3.5 Sonnet (proxied)
+# … other fields …
+fallback:                          # generic engine-down / 503 / timeout
+  - claude-3-5-haiku
+fallback_on_context_length:        # prompt too long for the model
+  - claude-3-7-sonnet-200k         # bigger context window
+  - qwen-2.5-coder-32b-1m
+fallback_on_content_policy:        # vendor refused on alignment
+  - qwen3-coder-30b                # permissively-aligned open weight
+```
+
+Behavior:
+
+- `fallback_on_context_length` fires only when the classifier identifies a context-length error (`n_ctx exceeded`, OpenAI's "maximum context length", etc.).
+- `fallback_on_content_policy` fires on refusal patterns (`content_policy_violation`, "unable to help with that", Bedrock guardrails).
+- An empty typed list short-circuits to `fallback`.
+
+Traces tag the choice as `flock.fallback.classifier = generic | context-length | content-policy`. The metric `flock_router_fallback_total{reason}` separates the buckets.
 
 ## Submitting a new catalog entry
 

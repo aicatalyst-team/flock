@@ -66,15 +66,22 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	routed := router.New(eng, st)
 
 	// Wire catalog-driven fallback chains: when a request to model X fails,
-	// retry against X's catalog fallback list in order. Closure captures the
-	// catalog slice — fresh lookups happen per call so a catalog reload would
-	// be observed (catalog hot-reload isn't shipped yet but this leaves room).
-	routed.SetFallbackResolver(func(modelID string) []string {
+	// retry against X's catalog fallback list in order. The resolver
+	// returns the typed chains (generic + per-error-class) so the router
+	// can pick the right list after classifying the primary's failure.
+	// Closure captures the catalog slice — fresh lookups happen per call
+	// so a catalog reload would be observed (catalog hot-reload isn't
+	// shipped yet but this leaves room).
+	routed.SetFallbackResolver(func(modelID string) router.FallbackChains {
 		entry := models.FindByID(cat, modelID)
 		if entry == nil {
-			return nil
+			return router.FallbackChains{}
 		}
-		return entry.Fallback
+		return router.FallbackChains{
+			Generic:       entry.Fallback,
+			ContextLength: entry.FallbackOnContextLength,
+			ContentPolicy: entry.FallbackOnContentPolicy,
+		}
 	})
 	// Latency-aware fallback (Bet #1): opt-in via router.latency_fallback_p95_seconds.
 	// Zero (default) leaves behavior unchanged.

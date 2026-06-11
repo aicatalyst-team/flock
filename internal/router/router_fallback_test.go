@@ -67,7 +67,9 @@ func newRouterWithStub(t *testing.T, stub *stubEngine, chain map[string][]string
 		inflight:  map[string]int{},
 		remotes:   map[string]engines.Engine{},
 	}
-	r.SetFallbackResolver(func(id string) []string { return chain[id] })
+	r.SetFallbackResolver(func(id string) FallbackChains {
+		return FallbackChains{Generic: chain[id]}
+	})
 	return r
 }
 

@@ -42,12 +42,25 @@ type Entry struct {
 	// "2024-09-01" rather than guessing.
 	Released string `yaml:"released,omitempty" json:"released,omitempty"`
 
-	// Fallback is an ordered list of catalog IDs to try when the primary
-	// model can't serve a request (engine down, model not loaded, 503,
-	// timeout, etc.). Tried in order; the first that succeeds wins.
+	// Fallback is the GENERIC ordered fallback chain — tried when the
+	// router can't classify the primary's failure into a more specific
+	// category. Engine down, model not loaded, generic 5xx, timeout.
 	// Silent to clients — the response carries the requested model name.
 	// Operators see fallback hits in the audit log + stderr.
 	Fallback []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`
+
+	// FallbackOnContextLength replaces the generic chain when the primary
+	// rejects with a context-length-exceeded error. Typically points at
+	// long-context variants of the same family (e.g. an `n_ctx=128k`
+	// llama-server config or a Yi/Qwen long-context build). Empty falls
+	// back to `Fallback`.
+	FallbackOnContextLength []string `yaml:"fallback_on_context_length,omitempty" json:"fallback_on_context_length,omitempty"`
+
+	// FallbackOnContentPolicy replaces the generic chain when the
+	// upstream (usually a vendor — Anthropic, OpenAI) refuses on content
+	// policy grounds. Typically points at an open-weight or
+	// permissively-aligned model. Empty falls back to `Fallback`.
+	FallbackOnContentPolicy []string `yaml:"fallback_on_content_policy,omitempty" json:"fallback_on_content_policy,omitempty"`
 }
 
 // SourceSpec describes where to fetch model weights from.

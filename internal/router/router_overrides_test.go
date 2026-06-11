@@ -68,10 +68,12 @@ func TestOverrides_IsSet(t *testing.T) {
 // the catalog resolver. This is the bit operators are paying for.
 func TestChainFor_PerRequestOverridesCatalog(t *testing.T) {
 	r := &Router{}
-	r.SetFallbackResolver(func(string) []string { return []string{"catalog-1", "catalog-2"} })
+	r.SetFallbackResolver(func(string) FallbackChains {
+		return FallbackChains{Generic: []string{"catalog-1", "catalog-2"}}
+	})
 
 	t.Run("no overrides uses catalog", func(t *testing.T) {
-		chain, source := r.chainFor("primary", Overrides{})
+		chain, source, _ := r.chainFor("primary", Overrides{})
 		if source != "catalog" {
 			t.Errorf("source = %q, want catalog", source)
 		}
@@ -80,7 +82,7 @@ func TestChainFor_PerRequestOverridesCatalog(t *testing.T) {
 		}
 	})
 	t.Run("override replaces catalog", func(t *testing.T) {
-		chain, source := r.chainFor("primary", Overrides{Fallbacks: []string{"req-1", "req-2", "req-3"}})
+		chain, source, _ := r.chainFor("primary", Overrides{Fallbacks: []string{"req-1", "req-2", "req-3"}})
 		if source != "request" {
 			t.Errorf("source = %q, want request", source)
 		}

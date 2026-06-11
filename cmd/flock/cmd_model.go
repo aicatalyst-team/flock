@@ -902,6 +902,14 @@ func modelInfo(id string, asJSON bool) {
 		fmt.Printf("  %sFallback%s       %s\n",
 			bold, reset, strings.Join(entry.Fallback, " → "))
 	}
+	if len(entry.FallbackOnContextLength) > 0 {
+		fmt.Printf("  %sFallback (context-length)%s  %s\n",
+			bold, reset, strings.Join(entry.FallbackOnContextLength, " → "))
+	}
+	if len(entry.FallbackOnContentPolicy) > 0 {
+		fmt.Printf("  %sFallback (content-policy)%s  %s\n",
+			bold, reset, strings.Join(entry.FallbackOnContentPolicy, " → "))
+	}
 
 	// Install + usage snippets — shape depends on what this model does.
 	hasCap := func(c string) bool {

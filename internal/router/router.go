@@ -40,11 +40,39 @@ import (
 // or no-op'd.
 var tracer trace.Tracer = otel.Tracer("github.com/hadihonarvar/flock/internal/router")
 
-// FallbackResolver returns the ordered list of fallback model IDs for a
-// primary model. Empty slice (or nil) means no fallback — Router behaves
-// exactly as it did before this hook existed. Typically backed by the
-// catalog's `fallback:` field.
-type FallbackResolver func(modelID string) []string
+// FallbackChains carries the per-class fallback lists for a single
+// primary model. Generic is the catalog's `fallback:`; the typed lists
+// (ContextLength, ContentPolicy) come from `fallback_on_*:`. An empty
+// typed list means "use Generic" — operators only fill the typed list
+// when they want a class-specific target.
+type FallbackChains struct {
+	Generic       []string
+	ContextLength []string
+	ContentPolicy []string
+}
+
+// PickFor returns the chain that matches the given ErrorClass, falling
+// back to Generic when the typed list is empty (the common case for
+// most catalog entries).
+func (c FallbackChains) PickFor(class ErrorClass) []string {
+	switch class {
+	case ClassContextLength:
+		if len(c.ContextLength) > 0 {
+			return c.ContextLength
+		}
+	case ClassContentPolicy:
+		if len(c.ContentPolicy) > 0 {
+			return c.ContentPolicy
+		}
+	}
+	return c.Generic
+}
+
+// FallbackResolver returns the per-class fallback chains for a primary
+// model. An empty FallbackChains value means "no fallback" — Router
+// behaves exactly as it did before this hook existed. Typically backed
+// by a closure over the catalog's `fallback*:` fields.
+type FallbackResolver func(modelID string) FallbackChains
 
 // Router implements engines.Engine by dispatching to either the local engine
 // or a remote worker engine based on cluster placements.
@@ -139,22 +167,41 @@ func (r *Router) SetLatencyConfig(cfg LatencyConfig) {
 	r.latency = newLatencyStats(cfg)
 }
 
-// resolveChain returns [primary, ...fallback]. When no resolver is set or
-// the model has no fallback entry, returns just [primary]. Bounded by
-// SetMaxFallbackAttempts when configured.
+// resolveChain returns [primary, ...generic fallback]. Kept for the
+// existing call paths (tests, latency reorder) that want a pre-built
+// list. For class-aware routing the call sites use chainsFor + PickFor
+// after classifying the primary's failure.
+//
+// When no resolver is set or the model has no fallback entry, returns
+// just [primary]. Bounded by SetMaxFallbackAttempts when configured.
 func (r *Router) resolveChain(model string) []string {
+	chains := r.chainsFor(model)
+	return r.applyCap(buildChain(model, chains.Generic))
+}
+
+// chainsFor returns the typed fallback chains for `model`. A zero
+// FallbackChains value (no resolver configured / no chain declared) is
+// returned as-is.
+func (r *Router) chainsFor(model string) FallbackChains {
 	if r.fallback == nil {
-		return []string{model}
+		return FallbackChains{}
 	}
-	fb := r.fallback(model)
+	return r.fallback(model)
+}
+
+func buildChain(primary string, fb []string) []string {
 	if len(fb) == 0 {
-		return []string{model}
+		return []string{primary}
 	}
-	chain := make([]string, 0, len(fb)+1)
-	chain = append(chain, model)
-	chain = append(chain, fb...)
-	// Cap = primary + N fallbacks (so MaxFallbackAttempts=3 means walk
-	// up to 4 candidates total). The legacy behavior (limit=0) is "no cap".
+	out := make([]string, 0, len(fb)+1)
+	out = append(out, primary)
+	out = append(out, fb...)
+	return out
+}
+
+// applyCap trims `chain` to MaxFallbackAttempts+1 candidates (primary
+// + N fallbacks). The legacy behavior (limit=0) walks the entire chain.
+func (r *Router) applyCap(chain []string) []string {
 	if limit := r.maxFallbackAttempts; limit > 0 && len(chain) > limit+1 {
 		chain = chain[:limit+1]
 		metrics.ObserveRouterFallback("chain", "cap-exhausted")
@@ -212,7 +259,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	defer span.End()
 
 	ov := FromContext(ctx)
-	chain, source := r.chainFor(req.Model, ov)
+	chain, source, chains := r.chainFor(req.Model, ov)
 	if source == "catalog" {
 		if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
 			chain = reordered
@@ -234,7 +281,9 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	}
 
 	var primaryErr error
-	for i, candidate := range chain {
+	classified := false
+	for i := 0; i < len(chain); i++ {
+		candidate := chain[i]
 		attempt := req
 		attempt.Model = candidate
 		attemptStart := time.Now()
@@ -310,12 +359,74 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 		if i == 0 {
 			primaryErr = lastErr
 		}
+		// After the first candidate fails, classify the error and swap
+		// the rest of the chain for a typed list when one is configured
+		// AND it differs from the generic list. Only applies to
+		// catalog-driven routing; per-request overrides bypass typed
+		// selection on the theory that the operator explicitly chose
+		// their chain.
+		if !classified && source == "catalog" {
+			classified = true
+			chain = r.maybeSwapTypedChain(chain, chains, lastErr, "embed", i, span)
+		}
 	}
 	span.SetStatus(codes.Error, "all candidates failed")
 	if primaryErr != nil {
 		span.RecordError(primaryErr)
 	}
 	return engines.EmbedResponse{}, primaryErr
+}
+
+// maybeSwapTypedChain inspects `err`, classifies it, and (if the
+// classifier returned a typed bucket with a non-empty list that differs
+// from generic) replaces the remainder of `chain` from index i+1
+// onwards with the typed list.
+//
+// Returns the (possibly new) chain. Emits the
+// `flock.fallback.classifier` span attribute and the
+// `flock_router_fallback_total{reason="content-policy|context-length"}`
+// metric so operators can see which classifier branch fired.
+func (r *Router) maybeSwapTypedChain(chain []string, chains FallbackChains, err error, op string, primaryIdx int, span trace.Span) []string {
+	class := ClassifyError(err)
+	span.SetAttributes(attribute.String("flock.fallback.classifier", class.String()))
+	if class == ClassGeneric {
+		return chain
+	}
+	typed := chains.PickFor(class)
+	if len(typed) == 0 || sameOrder(typed, chains.Generic) {
+		return chain
+	}
+	// Replace the remainder of the chain with the typed list. We do not
+	// rebuild via buildChain here because the primary has already been
+	// tried — typed lists are pure replacements for the *fallbacks*.
+	newChain := make([]string, 0, primaryIdx+1+len(typed))
+	newChain = append(newChain, chain[:primaryIdx+1]...)
+	newChain = append(newChain, typed...)
+	newChain = r.applyCap(newChain)
+	metrics.ObserveRouterFallback(op, class.String())
+	if r.log != nil {
+		r.log.Info("router typed fallback",
+			"op", op,
+			"classifier", class.String(),
+			"new_chain_len", len(newChain),
+		)
+	}
+	return newChain
+}
+
+// sameOrder returns true when two slices have identical contents in
+// order. Cheap escape hatch so an entry whose typed list duplicates the
+// generic list short-circuits to the existing behavior.
+func sameOrder(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // chainFor builds the candidate chain for `model`, accounting for any
@@ -326,14 +437,20 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 //     operators can tell at-a-trace who's bypassing catalog policy.
 //   - "catalog" — fell through to the catalog-driven resolver (or just
 //     the primary if no resolver / no `fallback:` entry).
-func (r *Router) chainFor(model string, ov Overrides) ([]string, string) {
+//
+// The returned `chains` carries the typed fallback lists; callers use
+// this to swap the remainder of the chain after classifying the
+// primary's failure. For source=="request" the returned chains is the
+// zero value — typed selection only applies to catalog-driven routing.
+func (r *Router) chainFor(model string, ov Overrides) ([]string, string, FallbackChains) {
 	if len(ov.Fallbacks) > 0 {
 		chain := make([]string, 0, len(ov.Fallbacks)+1)
 		chain = append(chain, model)
 		chain = append(chain, ov.Fallbacks...)
-		return chain, "request"
+		return chain, "request", FallbackChains{}
 	}
-	return r.resolveChain(model), "catalog"
+	chains := r.chainsFor(model)
+	return r.applyCap(buildChain(model, chains.Generic)), "catalog", chains
 }
 
 // waitBackoff sleeps for the backoff interval before retry attempt `n`.
@@ -385,7 +502,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// inline below if every candidate fails synchronously.
 
 	ov := FromContext(ctx)
-	chain, source := r.chainFor(req.Model, ov)
+	chain, source, chains := r.chainFor(req.Model, ov)
 	// Latency-aware reorder applies only to the catalog chain — per-request
 	// overrides are operator intent and shouldn't be silently rearranged.
 	if source == "catalog" {
@@ -409,7 +526,9 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	}
 
 	var primaryErr error
-	for i, candidate := range chain {
+	classified := false
+	for i := 0; i < len(chain); i++ {
+		candidate := chain[i]
 		attempt := req
 		attempt.Model = candidate
 		attemptStart := time.Now()
@@ -476,6 +595,10 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			attemptSpan.End()
 			if i == 0 {
 				primaryErr = lastErr
+			}
+			if !classified && source == "catalog" {
+				classified = true
+				chain = r.maybeSwapTypedChain(chain, chains, lastErr, "chat", i, span)
 			}
 			continue
 		}
