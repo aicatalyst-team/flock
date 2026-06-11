@@ -17,22 +17,26 @@ func TestParseModelAddArgs(t *testing.T) {
 		wantID     string
 		wantForce  bool
 		wantDryRun bool
+		wantFrom   string
 	}{
-		{"id only", []string{"qwen3.6-27b"}, "qwen3.6-27b", false, false},
-		{"id then force", []string{"qwen3.6-27b", "--force"}, "qwen3.6-27b", true, false},
-		{"force then id", []string{"--force", "qwen3.6-27b"}, "qwen3.6-27b", true, false},
-		{"single-dash force", []string{"qwen3.6-27b", "-force"}, "qwen3.6-27b", true, false},
-		{"dry-run only", []string{"qwen3.6-27b", "--dry-run"}, "qwen3.6-27b", false, true},
-		{"dry-run + force", []string{"--dry-run", "qwen3.6-27b", "--force"}, "qwen3.6-27b", true, true},
-		{"dryrun spelling", []string{"qwen3.6-27b", "--dryrun"}, "qwen3.6-27b", false, true},
-		{"empty", []string{}, "", false, false},
+		{"id only", []string{"qwen3.6-27b"}, "qwen3.6-27b", false, false, ""},
+		{"id then force", []string{"qwen3.6-27b", "--force"}, "qwen3.6-27b", true, false, ""},
+		{"force then id", []string{"--force", "qwen3.6-27b"}, "qwen3.6-27b", true, false, ""},
+		{"single-dash force", []string{"qwen3.6-27b", "-force"}, "qwen3.6-27b", true, false, ""},
+		{"dry-run only", []string{"qwen3.6-27b", "--dry-run"}, "qwen3.6-27b", false, true, ""},
+		{"dry-run + force", []string{"--dry-run", "qwen3.6-27b", "--force"}, "qwen3.6-27b", true, true, ""},
+		{"dryrun spelling", []string{"qwen3.6-27b", "--dryrun"}, "qwen3.6-27b", false, true, ""},
+		{"from path", []string{"--from", "./my.yaml"}, "", false, false, "./my.yaml"},
+		{"from path equals", []string{"--from=./my.yaml"}, "", false, false, "./my.yaml"},
+		{"from + force", []string{"--from", "x.yaml", "--force"}, "", true, false, "x.yaml"},
+		{"empty", []string{}, "", false, false, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			id, force, dryRun := parseModelAddArgs(c.args)
-			if id != c.wantID || force != c.wantForce || dryRun != c.wantDryRun {
-				t.Fatalf("got (%q, force=%v, dryRun=%v), want (%q, force=%v, dryRun=%v)",
-					id, force, dryRun, c.wantID, c.wantForce, c.wantDryRun)
+			id, force, dryRun, from := parseModelAddArgs(c.args)
+			if id != c.wantID || force != c.wantForce || dryRun != c.wantDryRun || from != c.wantFrom {
+				t.Fatalf("got (%q, force=%v, dryRun=%v, from=%q), want (%q, force=%v, dryRun=%v, from=%q)",
+					id, force, dryRun, from, c.wantID, c.wantForce, c.wantDryRun, c.wantFrom)
 			}
 		})
 	}

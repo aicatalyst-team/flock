@@ -895,10 +895,19 @@ flock model search vision
 ### Add a model
 
 ```bash
-flock model add qwen3-coder           # from catalog
-flock model add hf:Qwen/Qwen3-72B-AWQ # from HuggingFace
-flock model add file:./my-finetune.gguf
+flock model add qwen3-coder                      # from catalog
+flock model add hf:Qwen/Qwen3-72B-AWQ            # from HuggingFace (scheme prefix)
+flock model add ollama:phi3:mini                 # any Ollama tag
+flock model add file:/abs/path/my-finetune.gguf  # pre-downloaded GGUF
+flock model add --from ./my-model.yaml           # from a user-supplied catalog YAML
 ```
+
+**Four ways to install a model:**
+
+1. **Curated catalog** — the 37 entries in `catalog/*.yaml`. Hardware-floor checks apply.
+2. **Scheme prefix** (`hf:` / `ollama:` / `file:`) — one-liner for anything the engine supports; no hardware check.
+3. **`--from <my.yaml>`** — install from a user-written catalog YAML. The file is copied into `~/.flock/catalog/` so it persists and shows up in `flock model search` / `info` next run.
+4. **Drop-in dir** — write a YAML to `~/.flock/catalog/<id>.yaml` directly, then `flock model add <id>` treats it like a built-in entry. Same schema as `catalog/*.yaml` (`id`, `display_name`, `source.{type,repo,ollama_name,path}`, `hardware`, `capabilities`).
 
 This:
 1. Checks `catalog/<id>.yaml`'s `hardware.min_ram_gb` (and `min_vram_gb`) against the cluster — installs that overshoot the floor are refused with a clear error. Pass `--force` to override (e.g. when you know swap or a quantization knob will save you).

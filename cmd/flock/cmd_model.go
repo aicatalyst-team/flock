@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
+	"gopkg.in/yaml.v3"
 )
 
 // truncStr is also defined in cmd_usage.go (this file uses it).
@@ -35,6 +37,7 @@ func cmdModel(args []string) {
 			"flock model add hf:bartowski/Phi-3-mini-GGUF   # any HuggingFace repo (skips catalog)",
 			"flock model add ollama:phi3:mini  # any Ollama tag (must be using ollama engine)",
 			"flock model add file:/tmp/my.gguf # a pre-downloaded GGUF on disk",
+			"flock model add --from ./my-model.yaml   # install from a user-supplied catalog YAML",
 			"flock model ls                    # list installed models",
 			"flock model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
 			"flock model unload llama-3.2-3b   # drop from engine RAM without deleting weights (Ollama)",
@@ -44,6 +47,7 @@ func cmdModel(args []string) {
 			"Override with --force when you know swap, quantization, or sharding will compensate.",
 			"For sharded models (split across multiple machines) see `flock shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
+			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--from <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.flock/catalog/` and run `flock model add <id>`.",
 		},
 	}
 	if len(args) == 0 {
@@ -54,7 +58,14 @@ func cmdModel(args []string) {
 	}
 	switch args[0] {
 	case "add":
-		id, force, dryRun := parseModelAddArgs(args[1:])
+		id, force, dryRun, fromPath := parseModelAddArgs(args[1:])
+		// `--from <my.yaml>` installs a model from a user-supplied catalog
+		// YAML, copying it into `~/.flock/catalog/` so it persists and
+		// shows up in `flock model search` / `info` next time.
+		if fromPath != "" {
+			modelAddFromYAML(fromPath, force, dryRun)
+			return
+		}
 		// Scheme-prefixed ids (hf:, ollama:, file:) skip the catalog lookup
 		// entirely — they describe a model we know how to install but have
 		// no curated YAML for. Hardware-floor and dry-run plans both fall
@@ -239,10 +250,14 @@ func pickInstalledID(prompt, seed string) string {
 	return pickFromList(prompt, items, seed)
 }
 
-// parseModelAddArgs extracts the model id and the --force / --dry-run
-// flags from the args passed after "model add". Order doesn't matter.
-func parseModelAddArgs(args []string) (id string, force bool, dryRun bool) {
-	for _, a := range args {
+// parseModelAddArgs extracts the model id and the --force / --dry-run /
+// --from flags from the args passed after "model add". Order doesn't
+// matter. `--from <path>` installs from a user-supplied catalog YAML
+// (skipped when empty); the positional id is optional in that case and
+// is taken from the YAML's `id:` field.
+func parseModelAddArgs(args []string) (id string, force bool, dryRun bool, fromPath string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--force", "-force":
 			force = true
@@ -250,12 +265,22 @@ func parseModelAddArgs(args []string) (id string, force bool, dryRun bool) {
 		case "--dry-run", "-dry-run", "--dryrun":
 			dryRun = true
 			continue
+		case "--from", "-from":
+			if i+1 < len(args) {
+				fromPath = args[i+1]
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(a, "--from=") {
+			fromPath = strings.TrimPrefix(a, "--from=")
+			continue
 		}
 		if id == "" {
 			id = a
 		}
 	}
-	return id, force, dryRun
+	return id, force, dryRun, fromPath
 }
 
 // modelAddDryRun prints the plan for installing `id` without actually
@@ -422,6 +447,74 @@ func modelAddEntry(entry *models.Entry, force bool) {
 		LastSeen: time.Now(),
 	})
 	ok(os.Stdout, "installed: %s", entry.ID)
+}
+
+// modelAddFromYAML loads a user-supplied catalog YAML at `path`, copies
+// it into `~/.flock/catalog/<id>.yaml` so it persists across runs and
+// shows up in `flock model search` / `info`, then runs the standard
+// install flow. The copy step is what makes `--from` more useful than
+// the scheme prefixes — once installed, the model is indistinguishable
+// from a curated catalog entry.
+func modelAddFromYAML(path string, force, dryRun bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		die("read %s: %v", path, err)
+	}
+	var entry models.Entry
+	if err := yaml.Unmarshal(data, &entry); err != nil {
+		die("parse %s: %v", path, err)
+	}
+	if entry.ID == "" {
+		die("%s: missing `id:` field — a catalog entry needs at least an id and source", path)
+	}
+	if entry.Source.Type == "" {
+		die("%s: missing `source.type:` field — set to ollama, huggingface, or file", path)
+	}
+
+	cfg := loadConfigOrExit()
+	// Persist into ~/.flock/catalog/ so this entry is visible to future
+	// `flock model search/info/ls` runs. We use UserCatalogDir() to honor
+	// FLOCK_CATALOG_DIR when set; otherwise default to ~/.flock/catalog.
+	dest, err := persistUserCatalogEntry(cfg.CatalogDir, entry.ID, data)
+	if err != nil {
+		warn(os.Stdout, "could not persist %s into the user catalog (%v) — proceeding with one-shot install", entry.ID, err)
+	} else if dest != "" {
+		note(os.Stdout, "saved %s to %s — visible to `flock model search` / `info` next run", entry.ID, dest)
+	}
+
+	if dryRun {
+		modelAddDryRun(entry.ID)
+		return
+	}
+	modelAddEntry(&entry, force)
+}
+
+// persistUserCatalogEntry writes the YAML bytes to the resolved user
+// catalog dir (defaulting to ~/.flock/catalog when FLOCK_CATALOG_DIR is
+// unset). Returns the destination path. Returns ("", nil) when no
+// suitable directory could be resolved — caller falls back to a
+// one-shot install. Does not overwrite an existing entry with the same
+// id; surfaces a clear error so the user can rename or remove first.
+func persistUserCatalogEntry(configuredDir, id string, data []byte) (string, error) {
+	dir := configuredDir
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home: %w", err)
+		}
+		dir = filepath.Join(home, ".flock", "catalog")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	dest := filepath.Join(dir, id+".yaml")
+	if _, err := os.Stat(dest); err == nil {
+		return "", fmt.Errorf("%s already exists — remove or rename it first", dest)
+	}
+	if err := os.WriteFile(dest, data, 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", dest, err)
+	}
+	return dest, nil
 }
 
 // sourceCompatibleWithEngine reports whether a catalog (or synthetic)

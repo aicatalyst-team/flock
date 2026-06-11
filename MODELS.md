@@ -89,7 +89,9 @@ The per-model walkthroughs below cover a curated subset with full install + clie
 
 ### Installing models that aren't in the catalog
 
-`flock model add` accepts three scheme prefixes that bypass the catalog and pull anything the configured engine can serve. The hardware-floor check is skipped (no curated `min_ram_gb` to compare against), so the user is responsible for picking weights that fit.
+`flock model add` gives you three paths beyond the curated 37 entries:
+
+**1. Scheme prefixes** — one-liner; no YAML, no hardware-floor check:
 
 ```bash
 flock model add hf:Qwen/Qwen3-72B-AWQ           # vLLM / MLX / llama-server
@@ -99,6 +101,34 @@ flock model add file:/abs/path/my-finetune.gguf # llama-server / MLX, pre-downlo
 ```
 
 The dashboard's **Models** tab has the same input under "Add custom model".
+
+**2. `--from <my.yaml>`** — install from your own catalog YAML; copied into `~/.flock/catalog/` so it persists:
+
+```bash
+flock model add --from ./my-model.yaml
+```
+
+**3. Drop-in dir** — write a YAML to `~/.flock/catalog/<id>.yaml` directly, then install by id:
+
+```bash
+mkdir -p ~/.flock/catalog
+cat > ~/.flock/catalog/my-llama.yaml <<'EOF'
+id: my-llama
+display_name: My fine-tuned llama
+source:
+  type: huggingface
+  repo: my-org/my-llama-gguf
+size_bytes: 8000000000
+hardware:
+  min_ram_gb: 8
+capabilities: [chat]
+recommended_engines: [llamacpp]
+license: apache-2.0
+EOF
+flock model add my-llama
+```
+
+Paths 2 and 3 give you the same UX as a catalog entry — `flock model search my-llama`, `flock model info my-llama`, hardware-floor checks, license badges all work. Path 1 is the quick fallback when you don't want to write YAML.
 
 ---
 
