@@ -25,8 +25,8 @@ type Event struct {
 // non-blocking — drivers buffer internally and a queue-full event is
 // dropped (and counted) rather than blocking the caller.
 type Sink interface {
-	Name() string                 // unique identifier, used in metrics + admin test endpoint
-	Subscribes(kind string) bool  // false if the sink opted out of this Event Kind
+	Name() string                // unique identifier, used in metrics + admin test endpoint
+	Subscribes(kind string) bool // false if the sink opted out of this Event Kind
 	Send(ctx context.Context, e Event)
 	// Close drains the queue or aborts, returning when the worker has
 	// stopped. Called by the server on shutdown.

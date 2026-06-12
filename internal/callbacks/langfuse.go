@@ -156,20 +156,20 @@ func (l *Langfuse) deliver(e Event) {
 				"timestamp": now,
 				"type":      "generation-create",
 				"body": map[string]any{
-					"id":           id,
-					"name":         "chat",
-					"startTime":    now,
-					"endTime":      now,
-					"model":        model,
-					"userId":       userID,
-					"input":        nil, // we don't ship prompt content by default — privacy
-					"output":       nil,
+					"id":        id,
+					"name":      "chat",
+					"startTime": now,
+					"endTime":   now,
+					"model":     model,
+					"userId":    userID,
+					"input":     nil, // we don't ship prompt content by default — privacy
+					"output":    nil,
 					"usage": map[string]any{
-						"input":      prompt,
-						"output":     completion,
-						"total":      prompt + completion,
-						"unit":       "TOKENS",
-						"totalCost":  costUSD,
+						"input":     prompt,
+						"output":    completion,
+						"total":     prompt + completion,
+						"unit":      "TOKENS",
+						"totalCost": costUSD,
 					},
 					"metadata": map[string]any{
 						"protocol": p["protocol"],

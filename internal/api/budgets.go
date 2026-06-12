@@ -68,14 +68,14 @@ func writeBudgetExceeded(w http.ResponseWriter, b store.Budget) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	body := map[string]any{
 		"error": map[string]any{
-			"type":         "budget_exceeded",
-			"message":      fmt.Sprintf("%s budget (%s) exhausted: %.4f / %.4f", b.Window, b.LimitUnit, b.CurrentValue, b.LimitValue),
-			"unit":         b.LimitUnit,
-			"window":       b.Window,
-			"current":      b.CurrentValue,
-			"limit":        b.LimitValue,
-			"reset_at":     b.ResetAt,
-			"retry_after":  retry,
+			"type":        "budget_exceeded",
+			"message":     fmt.Sprintf("%s budget (%s) exhausted: %.4f / %.4f", b.Window, b.LimitUnit, b.CurrentValue, b.LimitValue),
+			"unit":        b.LimitUnit,
+			"window":      b.Window,
+			"current":     b.CurrentValue,
+			"limit":       b.LimitValue,
+			"reset_at":    b.ResetAt,
+			"retry_after": retry,
 		},
 	}
 	_ = json.NewEncoder(w).Encode(body)

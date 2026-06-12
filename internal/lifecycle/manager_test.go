@@ -23,11 +23,11 @@ type fakeEngine struct {
 	noResident  bool // pretend the engine has no ResidentLister
 }
 
-func (f *fakeEngine) Name() string                                { return "fake" }
-func (f *fakeEngine) Endpoint() string                            { return "fake://" }
-func (f *fakeEngine) Health(context.Context) error                { return nil }
-func (f *fakeEngine) List(context.Context) ([]string, error)      { return nil, nil }
-func (f *fakeEngine) Delete(context.Context, string) error        { return nil }
+func (f *fakeEngine) Name() string                           { return "fake" }
+func (f *fakeEngine) Endpoint() string                       { return "fake://" }
+func (f *fakeEngine) Health(context.Context) error           { return nil }
+func (f *fakeEngine) List(context.Context) ([]string, error) { return nil, nil }
+func (f *fakeEngine) Delete(context.Context, string) error   { return nil }
 func (f *fakeEngine) Pull(context.Context, string, func(string, int64, int64)) error {
 	return nil
 }

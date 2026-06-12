@@ -106,14 +106,14 @@ type Victim struct {
 
 // Plan is the admission decision for loading one model.
 type Plan struct {
-	ModelID         string   `json:"model_id"`
-	Native          string   `json:"native"`
-	NeedBytes       int64    `json:"need_bytes"`
-	BudgetBytes     int64    `json:"budget_bytes"`
-	ResidentBytes   int64    `json:"resident_bytes"`
-	FreeBytes       int64    `json:"free_bytes"`
-	Fits            bool     `json:"fits"`
-	AlreadyResident bool     `json:"already_resident"`
+	ModelID         string `json:"model_id"`
+	Native          string `json:"native"`
+	NeedBytes       int64  `json:"need_bytes"`
+	BudgetBytes     int64  `json:"budget_bytes"`
+	ResidentBytes   int64  `json:"resident_bytes"`
+	FreeBytes       int64  `json:"free_bytes"`
+	Fits            bool   `json:"fits"`
+	AlreadyResident bool   `json:"already_resident"`
 	// Impossible: the model exceeds the budget even on an empty node.
 	Impossible bool `json:"impossible"`
 	// Degraded: the engine can't report residency (no /api/ps
@@ -140,7 +140,7 @@ func (e *NeedsSwapError) Error() string {
 		e.Plan.ModelID, fmtBytes(e.Plan.NeedBytes), fmtBytes(e.Plan.FreeBytes), strings.Join(names, ", "))
 }
 
-// ImpossibleError: the model can never fit on this machine.
+// ImpossibleError reports a model that can never fit on this machine.
 type ImpossibleError struct{ Plan Plan }
 
 func (e *ImpossibleError) Error() string {
@@ -148,7 +148,7 @@ func (e *ImpossibleError) Error() string {
 		e.Plan.ModelID, fmtBytes(e.Plan.NeedBytes), fmtBytes(e.Plan.BudgetBytes))
 }
 
-// BlockedError: enough memory exists but pinned models hold it.
+// BlockedError reports that enough memory exists but pinned models hold it.
 type BlockedError struct{ Plan Plan }
 
 func (e *BlockedError) Error() string {
@@ -555,14 +555,14 @@ type ResidentView struct {
 
 // MemoryStatus is the full memory picture for the node.
 type MemoryStatus struct {
-	Supported     bool                      `json:"supported"`
-	Exclusive     bool                      `json:"exclusive"`
-	TotalRAMBytes int64                     `json:"total_ram_bytes"`
-	BudgetBytes   int64                     `json:"budget_bytes"`
-	ResidentBytes int64                     `json:"resident_bytes"`
-	FreeBytes     int64                     `json:"free_bytes"`
-	Resident      []ResidentView            `json:"resident"`
-	Desired       []store.DesiredPlacement  `json:"desired"`
+	Supported     bool                     `json:"supported"`
+	Exclusive     bool                     `json:"exclusive"`
+	TotalRAMBytes int64                    `json:"total_ram_bytes"`
+	BudgetBytes   int64                    `json:"budget_bytes"`
+	ResidentBytes int64                    `json:"resident_bytes"`
+	FreeBytes     int64                    `json:"free_bytes"`
+	Resident      []ResidentView           `json:"resident"`
+	Desired       []store.DesiredPlacement `json:"desired"`
 }
 
 // Status reports live residency + the desired set for dashboards and

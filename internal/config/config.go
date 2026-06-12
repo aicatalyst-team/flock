@@ -174,22 +174,22 @@ type ObservabilityConfig struct {
 // ResponseCacheConfig configures the response cache.
 type ResponseCacheConfig struct {
 	Enabled           bool   `yaml:"enabled"`
-	Driver            string `yaml:"driver"`             // memory | sqlite
-	MaxEntries        int    `yaml:"max_entries"`        // memory only; 0 = 1000
+	Driver            string `yaml:"driver"`              // memory | sqlite
+	MaxEntries        int    `yaml:"max_entries"`         // memory only; 0 = 1000
 	DefaultTTLSeconds int    `yaml:"default_ttl_seconds"` // 0 = 24h
 }
 
 // GuardrailConfig is one row from the observability.guardrails list.
 // Today only `kind: webhook` is implemented.
 type GuardrailConfig struct {
-	Name     string            `yaml:"name"`
-	Kind     string            `yaml:"kind"`      // webhook
-	Mode     string            `yaml:"mode"`      // pre | post | logging_only
-	URL      string            `yaml:"url"`       // webhook only
-	AuthKey  string            `yaml:"auth_key"`  // optional bearer (env-expanded)
-	Headers  map[string]string `yaml:"headers"`   // optional extra headers
-	FailOpen bool              `yaml:"fail_open"` // on error: true → Allow, false → Block
-	TimeoutSeconds int          `yaml:"timeout_seconds"`
+	Name           string            `yaml:"name"`
+	Kind           string            `yaml:"kind"`      // webhook
+	Mode           string            `yaml:"mode"`      // pre | post | logging_only
+	URL            string            `yaml:"url"`       // webhook only
+	AuthKey        string            `yaml:"auth_key"`  // optional bearer (env-expanded)
+	Headers        map[string]string `yaml:"headers"`   // optional extra headers
+	FailOpen       bool              `yaml:"fail_open"` // on error: true → Allow, false → Block
+	TimeoutSeconds int               `yaml:"timeout_seconds"`
 }
 
 // CallbackConfig is one row from the observability.callbacks list.

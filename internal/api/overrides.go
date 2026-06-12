@@ -18,16 +18,6 @@ import (
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
-// requestOverrides is the protocol-agnostic shape the body parsers emit.
-// flockExtras (OpenAI) and the Anthropic equivalent both build one of
-// these before handing off to overridesFromRequest, which merges in any
-// X-Flock-* headers and applies caps.
-type requestOverrides struct {
-	Fallbacks      []string
-	NumRetries     int
-	RetryBackoffMS int
-}
-
 // overridesContext extracts overrides from the request body extras +
 // X-Flock-* headers, attaches them to a derived ctx, and records an
 // audit row when the request actually carried overrides (so admins can

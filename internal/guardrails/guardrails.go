@@ -35,7 +35,7 @@ type Action struct {
 
 // Allow, Block, Rewrite, Flag are constructors that keep call sites
 // readable.
-func Allow() Action            { return Action{Kind: "allow"} }
+func Allow() Action              { return Action{Kind: "allow"} }
 func Block(reason string) Action { return Action{Kind: "block", Reason: reason} }
 func Rewrite(body []byte) Action { return Action{Kind: "rewrite", NewBody: body} }
 func Flag(reason string) Action  { return Action{Kind: "flag", Reason: reason} }

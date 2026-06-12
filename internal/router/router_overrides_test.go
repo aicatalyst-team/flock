@@ -120,10 +120,10 @@ func TestChainFor_PerRequestOverridesCatalog(t *testing.T) {
 // the cap. Using small numbers (10 ms initial) keeps the test fast.
 func TestWaitBackoff_Doubling(t *testing.T) {
 	cases := []struct {
-		retry      int
-		initialMS  int
-		wantMinMS  int
-		wantMaxMS  int
+		retry     int
+		initialMS int
+		wantMinMS int
+		wantMaxMS int
 	}{
 		{retry: 1, initialMS: 10, wantMinMS: 10, wantMaxMS: 30},
 		{retry: 2, initialMS: 10, wantMinMS: 20, wantMaxMS: 40},

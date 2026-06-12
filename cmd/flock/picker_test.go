@@ -83,10 +83,10 @@ func TestSubseqContainsFold(t *testing.T) {
 
 func TestExtractJSONFlag(t *testing.T) {
 	cases := []struct {
-		name    string
-		in      []string
-		want    []string
-		wantOn  bool
+		name   string
+		in     []string
+		want   []string
+		wantOn bool
 	}{
 		{"absent", []string{"foo"}, []string{"foo"}, false},
 		{"trailing", []string{"foo", "--json"}, []string{"foo"}, true},
@@ -109,10 +109,10 @@ func TestExtractJSONFlag(t *testing.T) {
 
 func TestExtractYesFlag(t *testing.T) {
 	cases := []struct {
-		name    string
-		in      []string
-		want    []string
-		wantOn  bool
+		name   string
+		in     []string
+		want   []string
+		wantOn bool
 	}{
 		{"absent", []string{"id"}, []string{"id"}, false},
 		{"long form trailing", []string{"id", "--yes"}, []string{"id"}, true},

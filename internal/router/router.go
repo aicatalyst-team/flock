@@ -157,17 +157,17 @@ type stickyEntry struct {
 // for placements + node info.
 func New(local engines.Engine, st store.Store) *Router {
 	return &Router{
-		local:     local,
-		store:     st,
-		localNode: "local",
-		log:       slog.Default(),
-		inflight:   make(map[string]int),
+		local:       local,
+		store:       st,
+		localNode:   "local",
+		log:         slog.Default(),
+		inflight:    make(map[string]int),
 		inflightDim: make(map[string]int),
-		remotes:    make(map[string]engines.Engine),
-		cooldowns:  make(map[string]time.Time),
-		failures:   make(map[string]int),
-		stickiness: make(map[string]stickyEntry),
-		latency:    newLatencyStats(LatencyConfig{}),
+		remotes:     make(map[string]engines.Engine),
+		cooldowns:   make(map[string]time.Time),
+		failures:    make(map[string]int),
+		stickiness:  make(map[string]stickyEntry),
+		latency:     newLatencyStats(LatencyConfig{}),
 	}
 }
 

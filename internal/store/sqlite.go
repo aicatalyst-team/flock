@@ -382,12 +382,12 @@ func (s *sqliteStore) Placements() PlacementStore { return &sqlitePlacements{db:
 func (s *sqliteStore) DesiredPlacements() DesiredPlacementStore {
 	return &sqliteDesiredPlacements{db: s.db}
 }
-func (s *sqliteStore) Shards() ShardStore         { return &sqliteShards{db: s.db} }
-func (s *sqliteStore) Usage() UsageStore          { return &sqliteUsage{db: s.db} }
-func (s *sqliteStore) Audit() AuditStore          { return &sqliteAudit{db: s.db} }
-func (s *sqliteStore) Budgets() BudgetStore       { return &sqliteBudgets{db: s.db} }
-func (s *sqliteStore) Cache() CacheStore          { return &sqliteCache{db: s.db} }
-func (s *sqliteStore) Close() error               { return s.db.Close() }
+func (s *sqliteStore) Shards() ShardStore   { return &sqliteShards{db: s.db} }
+func (s *sqliteStore) Usage() UsageStore    { return &sqliteUsage{db: s.db} }
+func (s *sqliteStore) Audit() AuditStore    { return &sqliteAudit{db: s.db} }
+func (s *sqliteStore) Budgets() BudgetStore { return &sqliteBudgets{db: s.db} }
+func (s *sqliteStore) Cache() CacheStore    { return &sqliteCache{db: s.db} }
+func (s *sqliteStore) Close() error         { return s.db.Close() }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -641,11 +641,11 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 		k.ExpiresAt = time.Unix(expiresAt, 0)
 	}
 	k.Revoked = rev != 0
-	if list, err := unmarshalAllowed(allowed); err != nil {
+	list, err := unmarshalAllowed(allowed)
+	if err != nil {
 		return nil, fmt.Errorf("decode allowed_models: %w", err)
-	} else {
-		k.AllowedModels = list
 	}
+	k.AllowedModels = list
 	return &k, nil
 }
 
@@ -672,11 +672,11 @@ func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 			k.ExpiresAt = time.Unix(expiresAt, 0)
 		}
 		k.Revoked = rev != 0
-		if list, err := unmarshalAllowed(allowed); err != nil {
+		list, err := unmarshalAllowed(allowed)
+		if err != nil {
 			return nil, fmt.Errorf("decode allowed_models: %w", err)
-		} else {
-			k.AllowedModels = list
 		}
+		k.AllowedModels = list
 		out = append(out, k)
 	}
 	return out, rows.Err()
@@ -1472,7 +1472,7 @@ func (s *sqliteBudgets) ResetExpired(ctx context.Context, apiKeyID string, now t
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, window, reset_at FROM budgets WHERE api_key_id = ? AND reset_at <= ?`,
 		apiKeyID, now.Unix())
