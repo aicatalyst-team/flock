@@ -372,6 +372,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 - Auto-discovery — a node joins by running one command with a token
 - Auto-placement — scheduler picks which node(s) host which model
+- **Memory lifecycle** — admission control against live engine residency (a machine is never overcommitted), `flock model load --swap` with LRU evict-and-drain, `--pin` to protect a model, desired placements restored on restart, `flock down` releases engine memory by default, `--exclusive` for one-model-per-machine
 - Heterogeneous sharding via llama.cpp RPC for models larger than any single node — `flock shard create <model> <N>` orchestrates the coordinator + every rpc-server end-to-end
 - Live model migration (planned)
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM), Linux+AMD (vLLM ROCm — planned), CPU (llama.cpp fallback)
@@ -783,6 +784,14 @@ router:
 
 observability:
   otlp_endpoint: ""                   # e.g. http://localhost:4318 — empty disables tracing (no-op overhead)
+
+placement:                            # memory lifecycle for this node's local engine
+  exclusive: false                    # true → one resident model per machine: every
+                                      # load evicts all other non-pinned models first
+  reserve_percent: 20                 # % of total RAM held back from the admission
+                                      # budget (OS + engine overhead headroom)
+  drain_timeout_seconds: 30           # max wait for in-flight requests before an
+                                      # eviction unloads anyway
 ```
 
 ### Environment variables
@@ -809,6 +818,10 @@ observability:
 | `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation lands v0.7 |
 | `FLOCK_VERTEX_LOCATION` | `router.fallback.vertex_location` (default `us-central1`) |
 | `FLOCK_LATENCY_P95_SECONDS` | `router.latency_fallback_p95_seconds` — when primary p95 exceeds this, prefer a faster fallback. 0 = disabled (default) |
+| `FLOCK_EXCLUSIVE` | `placement.exclusive` (truthy `1/true`) — one resident model per machine |
+| `FLOCK_PLACEMENT_RESERVE_PERCENT` | `placement.reserve_percent` — RAM held back from the admission budget (default 20) |
+| `FLOCK_PLACEMENT_DRAIN_TIMEOUT_SECONDS` | `placement.drain_timeout_seconds` — eviction drain bound (default 30) |
+| `FLOCK_UNLOAD_ON_EXIT` | `1` → Ctrl-C of `flock up` also unloads engine-resident models (the `flock down` path already does this by default) |
 
 ### Not yet configurable (roadmap)
 
@@ -991,6 +1004,45 @@ flock model ls
 # qwen-coder-14b     n_abc123, n_ghi789      serving  4.2            42
 # qwen3-72b          n_def456                serving  1.1            68
 ```
+
+### Load, unload, and pin (memory lifecycle)
+
+Installed ≠ resident: a model on disk loads into RAM on its first request. The
+memory commands control what occupies RAM *right now*, with admission control
+so a machine is never overcommitted:
+
+```bash
+flock model ps                          # what's resident + free memory budget
+flock model load qwen-coder-14b         # bring into RAM now; REFUSES if it doesn't fit
+flock model load qwen-coder-14b --swap  # evict least-recently-used models to make room
+flock model load nomic-embed-text --pin # pinned: never evicted, no idle TTL
+flock model unload qwen-coder-14b       # drain in-flight requests, then release RAM
+```
+
+How it works:
+
+- **Admission** checks the model's footprint (weights + ~20% overhead) against
+  live engine residency (Ollama `/api/ps`) and this machine's RAM budget
+  (total minus a 20% OS reserve, tunable via `placement.reserve_percent`).
+- **`--swap`** evicts only as many models as needed, least-recently-used first
+  (from the usage log), never pinned ones. Victims are **drained** — the router
+  stops sending them requests and in-flight ones finish (up to
+  `placement.drain_timeout_seconds`, default 30) — then unloaded and
+  audit-logged (`model_evicted`). Evicted models stay installed and reload on
+  demand.
+- **Loaded/pinned models are remembered** (desired placements in SQLite) and
+  restored in priority order on the next `flock up`.
+- **`flock up --exclusive`** (or `placement.exclusive: true`, or
+  `FLOCK_EXCLUSIVE=1`) enforces one resident model per machine: every load
+  evicts all other non-pinned models first. Good for single-GPU boxes.
+- **`flock down` releases memory by default** — it's a deliberate teardown.
+  Ctrl-C of `flock up` keeps models warm for fast dev restarts (Ollama's
+  ~5-min idle TTL frees them anyway); opt into immediate release there with
+  `--unload-on-exit`.
+
+> Residency reporting requires Ollama today. Other engines degrade gracefully:
+> admission still refuses over-budget models, and Flock-spawned llama-server
+> processes are killed (memory freed) on shutdown by the process supervisor.
 
 ### Remove a model
 
@@ -1194,7 +1246,9 @@ print(resp.content[0].text)
 | `GET` | `/admin/v1/catalog` | List catalog entries |
 | `POST` | `/admin/v1/models` | Install a model (auto-delegates to shard orch if `sharding.required`) |
 | `DELETE` | `/admin/v1/models/{id}` | Uninstall (auto-handles sharded teardown) |
-| `POST` | `/admin/v1/models/{id}/unload` | Drop a model from engine RAM without deleting weights (engines that don't support it return `status:"noop"`) |
+| `POST` | `/admin/v1/models/{id}/unload` | Drain in-flight requests, drop the model from engine RAM (weights stay; cleared from desired placements so it stays unloaded across restarts). Engines that don't support it return `status:"noop"` |
+| `POST` | `/admin/v1/models/{id}/load` | Memory-aware load: `{swap, pin, priority}`. 200 = loaded (response lists any evictions); 409 `needs_swap` with the LRU victim list; 409 `blocked_by_pinned`; 422 `impossible` (over the node's budget even when empty) |
+| `GET` | `/admin/v1/memory` | Live engine residency (per-model RAM/VRAM bytes via Ollama `/api/ps`), pins, priorities, free budget, exclusive flag |
 | `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
@@ -1231,10 +1285,12 @@ Every admin action is available via the CLI **and** the web UI — full parity. 
 
 ```
 # --- lifecycle (CLI only — UI can't kill the process running the UI) ---
-flock up [--no-wizard] [--auto-pull=false]   Start the local node (first-run wizard
-                                              picker installs a starter model unless
-                                              --no-wizard is set)
-flock down                        Stop the local node
+flock up [--no-wizard] [--auto-pull=false] [--exclusive]
+                                  Start the local node (first-run wizard picker
+                                  installs a starter model unless --no-wizard is
+                                  set; --exclusive = one resident model per machine)
+flock down [--no-unload]          Stop the local node and release engine memory
+                                  (--no-unload leaves models resident)
 flock status [--json]             Show local + cluster status
 flock join <url>?token=…          Join an existing cluster as a worker
 flock doctor                      Diagnose common problems
@@ -1258,6 +1314,18 @@ flock model add <id> [--force] [--dry-run]
                                   engine/ETA without pulling weights.
 flock model info <id> [--json]    Full details for one catalog model
 flock model remove <id> [--yes]   Uninstall a model (prompts unless --yes)
+
+# --- memory lifecycle (which models occupy RAM right now) ---
+flock model ps [--json]           Resident models + RAM/VRAM sizes, pins, free budget
+flock model load <id> [--swap] [--pin] [--priority N]
+                                  Bring a model into engine RAM with admission
+                                  control: refuses when it doesn't fit; --swap
+                                  evicts least-recently-used models (drained
+                                  first, audit-logged); --pin exempts from
+                                  eviction + the engine's idle TTL. Loaded/pinned
+                                  models are restored on the next `flock up`.
+flock model unload <id>           Drain, then drop from engine RAM (weights stay
+                                  on disk; stays unloaded across restarts)
 
 # --- sharded models (one model split across N machines) ---
 flock shard create <model> [N]    Orchestrate a sharded model across N workers
@@ -1299,7 +1367,7 @@ Persistent top-bar chips (every view) show: role (leader/worker), engine reachab
 |---|---|
 | **Dashboard (home)** | 4 KPI cards (nodes, models, requests, tokens served); latency card with p50/p95/p99; tier-colored error-rate card; top-model card; full-width SVG sparkline of requests-per-minute over the last 60 minutes; recent-activity strip (last 6 requests with outcome badges); copy-paste curl example |
 | **Nodes** | List + status; **Add a worker** modal generates a one-time node-scope token and shows both an install-and-join curl one-liner and a `flock join` command for boxes that already have the binary; per-row **drain** and **remove** with confirmation |
-| **Models** | Installed models table with per-row **test** (opens Playground pre-wired to the model), **unload** (drop from engine RAM, keep weights on disk), and **remove** (confirmed; auto-handles sharded teardown) buttons; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button) |
+| **Models** | **Engine memory card** (resident models with RAM sizes, pin badges, usage bar against the admission budget, per-row pin/unload); installed models table with per-row **test** (opens Playground pre-wired to the model), **load** (memory-aware; offers an LRU swap with a victim-list confirm when the model doesn't fit), **unload** (drain, then drop from engine RAM, keep weights on disk), and **remove** (confirmed; auto-handles sharded teardown) buttons; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button) |
 | **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
 | **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
 | **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome (live polling) |
@@ -1321,6 +1389,9 @@ Every cluster action is available both ways. Pick whichever fits your workflow:
 | Drain node | `flock node drain <id>` | Nodes tab → row's "drain" |
 | Remove node | `flock node remove <id>` | Nodes tab → row's "remove" |
 | Install model | `flock model add <id>` | Models tab → catalog picker → "Install" |
+| Load model into RAM | `flock model load <id> [--swap] [--pin]` | Models tab → row's "load" (confirm dialog lists evictions) |
+| Unload model from RAM | `flock model unload <id>` | Models tab → row's "unload" |
+| View engine memory | `flock model ps` | Models tab → Engine memory card |
 | Remove model | `flock model remove <id>` | Models tab → row's "remove" |
 | Create sharded model | `flock shard create <model> [N]` | Shards tab → "Create sharded model" |
 | Tear down sharded model | `flock shard remove <model>` | Shards tab → "Tear down" |

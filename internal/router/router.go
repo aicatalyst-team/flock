@@ -140,6 +140,7 @@ type Router struct {
 
 	mu          sync.RWMutex
 	inflight    map[string]int            // node_id → live request count
+	inflightDim map[string]int            // node_id + "|" + model → live request count (drain waits)
 	remotes     map[string]engines.Engine // node_id → cached remote engine
 	cooldowns   map[string]time.Time      // node_id → time the node leaves the penalty box
 	failures    map[string]int            // node_id → consecutive recent failures
@@ -161,6 +162,7 @@ func New(local engines.Engine, st store.Store) *Router {
 		localNode: "local",
 		log:       slog.Default(),
 		inflight:   make(map[string]int),
+		inflightDim: make(map[string]int),
 		remotes:    make(map[string]engines.Engine),
 		cooldowns:  make(map[string]time.Time),
 		failures:   make(map[string]int),
@@ -427,9 +429,9 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 				}
 				metrics.ObserveRouterFallback("embed", "retry")
 			}
-			r.incInflight(nodeID)
+			r.incInflight(nodeID, candidate)
 			res, err := ee.Embed(attemptCtx, attempt)
-			r.decInflight(nodeID)
+			r.decInflight(nodeID, candidate)
 			r.recordOutcome(nodeID, err == nil)
 			if err == nil {
 				attemptSpan.SetStatus(codes.Ok, "")
@@ -858,7 +860,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				}
 				metrics.ObserveRouterFallback("chat", "retry")
 			}
-			r.incInflight(nodeID)
+			r.incInflight(nodeID, candidate)
 			thisCtx, thisCancel := context.WithCancel(attemptCtx)
 			s, err := eng.Chat(thisCtx, attempt)
 			if err == nil {
@@ -868,7 +870,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 				break // stream opened — stop retrying
 			}
 			thisCancel()
-			r.decInflight(nodeID)
+			r.decInflight(nodeID, candidate)
 			r.recordOutcome(nodeID, false)
 			lastErr = err
 		}
@@ -904,7 +906,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		servedModel := candidate
 		go func() {
 			defer streamCancel() // always release engine's ctx
-			defer r.decInflight(nodeID)
+			defer r.decInflight(nodeID, servedModel)
 			defer close(out)
 			defer span.End() // duration covers full streamed response
 			var tokenCount int
@@ -978,11 +980,11 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 		w := w
 		go func() {
 			thisCtx, thisCancel := context.WithCancel(ctx)
-			r.incInflight(w.nodeID)
+			r.incInflight(w.nodeID, req.Model)
 			s, err := w.engine.Chat(thisCtx, req)
 			if err != nil {
 				thisCancel()
-				r.decInflight(w.nodeID)
+				r.decInflight(w.nodeID, req.Model)
 			}
 			resultCh <- result{stream: s, cancel: thisCancel, nodeID: w.nodeID, err: err}
 		}()
@@ -1006,7 +1008,7 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 		}
 		// Late arrival — cancel + drain.
 		res.cancel()
-		r.decInflight(res.nodeID)
+		r.decInflight(res.nodeID, req.Model)
 		metrics.ObserveRouterHedge("cancelled")
 		go drainWithTimeout(res.stream, 30*time.Second)
 	}
@@ -1023,7 +1025,7 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 	out := make(chan engines.StreamEvent, 16)
 	go func() {
 		defer winner.cancel()
-		defer r.decInflight(winner.nodeID)
+		defer r.decInflight(winner.nodeID, req.Model)
 		defer close(out)
 		defer span.End()
 		for ev := range winner.stream {
@@ -1306,18 +1308,26 @@ func (r *Router) getOrCreateRemote(nodeID, address, token string) engines.Engine
 	return eng
 }
 
-func (r *Router) incInflight(nodeID string) {
+func (r *Router) incInflight(nodeID, model string) {
 	r.mu.Lock()
 	r.inflight[nodeID]++
+	r.inflightDim[nodeID+"|"+model]++
 	n := r.inflight[nodeID]
 	r.mu.Unlock()
 	metrics.SetRouterInflight(nodeID, n)
 }
 
-func (r *Router) decInflight(nodeID string) {
+func (r *Router) decInflight(nodeID, model string) {
 	r.mu.Lock()
 	if r.inflight[nodeID] > 0 {
 		r.inflight[nodeID]--
+	}
+	key := nodeID + "|" + model
+	if r.inflightDim[key] > 0 {
+		r.inflightDim[key]--
+	}
+	if r.inflightDim[key] == 0 {
+		delete(r.inflightDim, key) // keep the map from growing unboundedly
 	}
 	n := r.inflight[nodeID]
 	r.mu.Unlock()
@@ -1331,6 +1341,21 @@ func (r *Router) Inflight() map[string]int {
 	defer r.mu.RUnlock()
 	out := make(map[string]int, len(r.inflight))
 	for k, v := range r.inflight {
+		out[k] = v
+	}
+	return out
+}
+
+// InflightByModel returns a snapshot of per-(node, model) in-flight counts,
+// keyed `node_id + "|" + model` (the model string is whatever the request
+// carried — catalog id normally, engine-native for direct passthrough).
+// Used by the lifecycle manager's eviction drain so it waits only on the
+// victim's traffic, not the whole node's.
+func (r *Router) InflightByModel() map[string]int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]int, len(r.inflightDim))
+	for k, v := range r.inflightDim {
 		out[k] = v
 	}
 	return out

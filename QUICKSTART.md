@@ -430,6 +430,24 @@ claude
 
 > 📖 **Full step-by-step per-model guide:** [MODELS.md](MODELS.md) — for *every* model in the catalog: system requirements, performance expectations on Mac/Linux, install + use snippets for curl / Cursor / Claude Code / SDKs, when to switch up.
 
+### Switching models without running out of RAM
+
+Installed models sit on disk; they only occupy RAM once used. When you switch
+between big models on one machine, let Flock manage the memory:
+
+```bash
+flock model ps                          # what's in RAM right now + free budget
+flock model load qwen3.6-27b --swap     # release the least-recently-used model, then load
+flock model load nomic-embed-text --pin # keep the embedding model resident forever
+flock model unload qwen-coder-14b       # free its RAM (weights stay on disk)
+```
+
+`load` refuses rather than overcommit your machine — `--swap` is the explicit
+"yes, evict the old one first" (in-flight requests finish before anything is
+unloaded). Pinned and loaded models come back automatically on the next
+`flock up`. And `flock down` releases all engine memory by default — pass
+`--no-unload` if you want models kept warm.
+
 ### Use ANY model Ollama supports (not just the catalog)
 
 The catalog is curated for UX, but Flock will pass through any Ollama model name as-is. Steps:

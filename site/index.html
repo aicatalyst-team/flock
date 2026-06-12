@@ -1309,6 +1309,11 @@ claude</pre>
           </div>
 
           <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🧠 Memory-aware model switching</div>
+            <p class="text-sm text-slate-600 leading-relaxed"><code class="font-mono text-xs bg-slate-100 px-1 rounded">flock model load --swap</code> releases the least-recently-used model (draining in-flight requests first), then loads the new one — your machine is never overcommitted. <code>--pin</code> protects a model; loaded models come back after restart; <code class="font-mono text-xs bg-slate-100 px-1 rounded">flock down</code> frees engine RAM by default.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
             <div class="text-sm font-semibold mb-2">🔑 Multi-tenant auth</div>
             <p class="text-sm text-slate-600 leading-relaxed">Per-user API keys (sha256-hashed). Scopes: admin / user / node. Daily token quotas. Revocation immediate.</p>
           </div>

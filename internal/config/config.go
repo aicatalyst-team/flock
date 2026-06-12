@@ -26,6 +26,24 @@ type Config struct {
 	Engine        EngineConfig        `yaml:"engine"`
 	Router        RouterConfig        `yaml:"router"`
 	Observability ObservabilityConfig `yaml:"observability"`
+	Placement     PlacementConfig     `yaml:"placement"`
+}
+
+// PlacementConfig tunes the memory-lifecycle manager (admission,
+// evict-and-swap) for this node's local engine.
+type PlacementConfig struct {
+	// Exclusive enforces one resident chat model per machine: loading a
+	// model evicts every other non-pinned resident model first, not just
+	// enough to fit. Env override: FLOCK_EXCLUSIVE=1.
+	Exclusive bool `yaml:"exclusive"`
+	// ReservePercent of total RAM is held back from the admission budget
+	// for the OS and engine overhead. Default 20. Env override:
+	// FLOCK_PLACEMENT_RESERVE_PERCENT.
+	ReservePercent int `yaml:"reserve_percent"`
+	// DrainTimeoutSeconds bounds how long an eviction waits for in-flight
+	// requests to finish before unloading anyway. Default 30.
+	// Env override: FLOCK_PLACEMENT_DRAIN_TIMEOUT_SECONDS.
+	DrainTimeoutSeconds int `yaml:"drain_timeout_seconds"`
 }
 
 type StorageConfig struct {
@@ -378,6 +396,19 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("FLOCK_STICKY_SESSION_TTL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.Router.StickySessionTTLSeconds = n
+		}
+	}
+	if v := os.Getenv("FLOCK_EXCLUSIVE"); v == "1" || v == "true" {
+		c.Placement.Exclusive = true
+	}
+	if v := os.Getenv("FLOCK_PLACEMENT_RESERVE_PERCENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < 100 {
+			c.Placement.ReservePercent = n
+		}
+	}
+	if v := os.Getenv("FLOCK_PLACEMENT_DRAIN_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.Placement.DrainTimeoutSeconds = n
 		}
 	}
 }

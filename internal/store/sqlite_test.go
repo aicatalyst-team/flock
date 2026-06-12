@@ -298,3 +298,140 @@ func sameSlice(a, b []string) bool {
 	}
 	return true
 }
+
+// TestDesiredPlacements covers CRUD + the restore ordering contract
+// (priority DESC, created_at ASC) the lifecycle manager depends on.
+func TestDesiredPlacements(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenSQLite(filepath.Join(dir, "x.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	dp := st.DesiredPlacements()
+
+	rows := []DesiredPlacement{
+		{NodeID: "local", ModelID: "chat-70b", Priority: 10, Pinned: true, CreatedAt: time.Unix(1000, 0)},
+		{NodeID: "local", ModelID: "embed-small", Priority: 10, CreatedAt: time.Unix(900, 0)},
+		{NodeID: "local", ModelID: "vision-12b", Priority: 1, CreatedAt: time.Unix(800, 0)},
+		{NodeID: "worker-1", ModelID: "other", Priority: 99, CreatedAt: time.Unix(700, 0)},
+	}
+	for _, d := range rows {
+		if err := dp.Upsert(ctx, d); err != nil {
+			t.Fatalf("Upsert(%s): %v", d.ModelID, err)
+		}
+	}
+
+	got, err := dp.ListByNode(ctx, "local")
+	if err != nil {
+		t.Fatalf("ListByNode: %v", err)
+	}
+	wantOrder := []string{"embed-small", "chat-70b", "vision-12b"} // prio 10 (older first), prio 10, prio 1
+	if len(got) != len(wantOrder) {
+		t.Fatalf("ListByNode: got %d rows, want %d", len(got), len(wantOrder))
+	}
+	for i, w := range wantOrder {
+		if got[i].ModelID != w {
+			t.Errorf("order[%d] = %s, want %s", i, got[i].ModelID, w)
+		}
+	}
+	if !got[1].Pinned {
+		t.Errorf("chat-70b should round-trip pinned=true")
+	}
+
+	// Upsert updates in place (no duplicate row, new priority observed).
+	if err := dp.Upsert(ctx, DesiredPlacement{NodeID: "local", ModelID: "vision-12b", Priority: 50}); err != nil {
+		t.Fatalf("re-Upsert: %v", err)
+	}
+	one, err := dp.Get(ctx, "local", "vision-12b")
+	if err != nil || one == nil {
+		t.Fatalf("Get after re-upsert: %v, %v", one, err)
+	}
+	if one.Priority != 50 {
+		t.Errorf("priority after upsert = %d, want 50", one.Priority)
+	}
+
+	if err := dp.Delete(ctx, "local", "vision-12b"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if g, _ := dp.Get(ctx, "local", "vision-12b"); g != nil {
+		t.Errorf("Get after delete: want nil, got %+v", g)
+	}
+	// Missing row is (nil, nil), not an error.
+	if g, err := dp.Get(ctx, "local", "never-existed"); err != nil || g != nil {
+		t.Errorf("Get(missing) = %+v, %v; want nil, nil", g, err)
+	}
+}
+
+// TestPlacementSetStatus verifies the draining flip hides a placement
+// from GetByModel (the router's view) and that flipping back restores it.
+func TestPlacementSetStatus(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenSQLite(filepath.Join(dir, "x.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p := st.Placements()
+
+	if err := p.Upsert(ctx, Placement{NodeID: "local", ModelID: "m1", Status: "ready", LastSeen: time.Now()}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if got, _ := p.GetByModel(ctx, "m1"); len(got) != 1 {
+		t.Fatalf("GetByModel before drain: got %d, want 1", len(got))
+	}
+	if err := p.SetStatus(ctx, "local", "m1", "draining"); err != nil {
+		t.Fatalf("SetStatus(draining): %v", err)
+	}
+	if got, _ := p.GetByModel(ctx, "m1"); len(got) != 0 {
+		t.Errorf("GetByModel while draining: got %d, want 0 (router must skip)", len(got))
+	}
+	if err := p.SetStatus(ctx, "local", "m1", "ready"); err != nil {
+		t.Fatalf("SetStatus(ready): %v", err)
+	}
+	if got, _ := p.GetByModel(ctx, "m1"); len(got) != 1 {
+		t.Errorf("GetByModel after restore: got %d, want 1", len(got))
+	}
+	// Unknown placement errors rather than silently no-oping.
+	if err := p.SetStatus(ctx, "local", "ghost", "draining"); err == nil {
+		t.Errorf("SetStatus(missing placement): want error, got nil")
+	}
+}
+
+// TestLastUsedByModel verifies the per-model MAX(ts) rollup that drives
+// LRU eviction ordering.
+func TestLastUsedByModel(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenSQLite(filepath.Join(dir, "x.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	recs := []Usage{
+		{TS: time.Unix(100, 0), APIKeyID: "k", UserID: "u", Model: "a", Protocol: "openai", Outcome: "ok"},
+		{TS: time.Unix(300, 0), APIKeyID: "k", UserID: "u", Model: "a", Protocol: "openai", Outcome: "ok"},
+		{TS: time.Unix(200, 0), APIKeyID: "k", UserID: "u", Model: "b", Protocol: "openai", Outcome: "ok"},
+	}
+	for _, u := range recs {
+		if err := st.Usage().Record(ctx, u); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	got, err := st.Usage().LastUsedByModel(ctx)
+	if err != nil {
+		t.Fatalf("LastUsedByModel: %v", err)
+	}
+	if got["a"].Unix() != 300 {
+		t.Errorf("a last used = %d, want 300 (MAX of 100,300)", got["a"].Unix())
+	}
+	if got["b"].Unix() != 200 {
+		t.Errorf("b last used = %d, want 200", got["b"].Unix())
+	}
+	if _, ok := got["never-used"]; ok {
+		t.Errorf("models with no usage must be absent from the map")
+	}
+}

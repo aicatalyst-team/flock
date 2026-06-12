@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,8 +24,8 @@ var _ = truncStr
 func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
-		summary: "install, list, search, inspect, or uninstall LLM models",
-		usage:   "flock model <add <id> [--force] | ls | search [query] | info <id> | remove <id>>",
+		summary: "install, list, search, inspect, load/unload, or uninstall LLM models",
+		usage:   "flock model <add <id> [--force] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] | unload <id> | remove <id>>",
 		examples: []string{
 			"flock model search                # browse the full catalog",
 			"flock model search coder          # filter to coding models",
@@ -39,12 +41,17 @@ func cmdModel(args []string) {
 			"flock model add file:/tmp/my.gguf # a pre-downloaded GGUF on disk",
 			"flock model add --from ./my-model.yaml   # install from a user-supplied catalog YAML",
 			"flock model ls                    # list installed models",
+			"flock model ps                    # models resident in engine RAM + free memory",
+			"flock model load qwen-coder-14b   # bring into RAM now (refuses if it doesn't fit)",
+			"flock model load qwen-coder-14b --swap     # evict least-recently-used models to make room",
+			"flock model load nomic-embed-text --pin    # exempt from eviction + engine idle TTL",
 			"flock model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
-			"flock model unload llama-3.2-3b   # drop from engine RAM without deleting weights (Ollama)",
+			"flock model unload llama-3.2-3b   # drop from engine RAM without deleting weights",
 		},
 		notes: []string{
 			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
 			"Override with --force when you know swap, quantization, or sharding will compensate.",
+			"`load` is memory-aware: it checks live engine residency (Ollama /api/ps) against this machine's RAM budget and refuses rather than overcommit; `--swap` evicts least-recently-used, non-pinned models (drained first, audit-logged). Loaded/pinned models are restored on the next `flock up`.",
 			"For sharded models (split across multiple machines) see `flock shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
 			"Adding a model not in the catalog: use a scheme prefix (`hf:owner/repo`, `ollama:tag`, `file:/abs/path.gguf`) for a one-liner, `--from <my.yaml>` to install from your own catalog entry, or drop a YAML file into `~/.flock/catalog/` and run `flock model add <id>`.",
@@ -137,18 +144,61 @@ func cmdModel(args []string) {
 			}
 		}
 		modelUnload(id)
+	case "load":
+		rest := args[1:]
+		id := ""
+		var loadArgs []string
+		for _, a := range rest {
+			if !strings.HasPrefix(a, "-") && id == "" {
+				id = a
+				continue
+			}
+			loadArgs = append(loadArgs, a)
+		}
+		if id == "" || !installedHasID(id) {
+			id = pickInstalledID("Pick an installed model to load:", id)
+			if id == "" {
+				die("no model selected")
+			}
+		}
+		modelLoad(id, loadArgs)
+	case "ps":
+		_, asJSON := extractJSONFlag(args[1:])
+		modelPs(asJSON)
 	default:
 		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
 }
 
 // modelUnload asks the engine to drop a loaded model from RAM without
-// deleting its weights from disk. For Ollama this issues a no-op generate
-// request with keep_alive=0. Engines that don't support unload (vLLM,
-// MLX-LM, llama-server) print a soft warning rather than failing — the
-// user can always restart the engine.
+// deleting its weights from disk. When the leader is running, the admin
+// endpoint is preferred — it drains in-flight requests first and clears
+// the model's desired-placement row so it stays unloaded across
+// restarts. With no leader (engine-only host), falls back to talking to
+// the engine directly. Engines that don't support unload (vLLM, MLX-LM,
+// llama-server) print a soft warning rather than failing.
 func modelUnload(id string) {
 	cfg := loadConfigOrExit()
+	resp, adminErr := adminCall(context.Background(), cfg, "POST", "/admin/v1/models/"+id+"/unload", nil)
+	if adminErr == nil {
+		var out struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(resp, &out)
+		if out.Status == "noop" {
+			warn(os.Stdout, "%s — restart the engine to free RAM", out.Reason)
+			return
+		}
+		ok(os.Stdout, "unloaded %s (drained, weights still on disk; stays unloaded across restarts)", id)
+		return
+	}
+	// A non-empty body means the leader IS running and refused — surface
+	// its error instead of side-stepping it via the engine.
+	if len(resp) > 0 {
+		die("unload %s: %v: %s", id, adminErr, strings.TrimSpace(string(resp)))
+	}
+	// Leader not reachable — drive the engine directly.
 	cat, err := models.LoadCatalog(cfg.CatalogDir)
 	if err != nil {
 		die("load catalog: %v", err)
@@ -177,6 +227,177 @@ func modelUnload(id string) {
 		die("unload failed: %v", err)
 	}
 	ok(os.Stdout, "unloaded %s from %s (weights still on disk)", id, eng.Name())
+}
+
+// modelLoad asks the running leader to bring a model into engine memory
+// with admission control (POST /admin/v1/models/{id}/load). The leader
+// owns the router and the eviction/drain machinery, so unlike `unload`
+// this command requires `flock up` to be running.
+func modelLoad(id string, args []string) {
+	var pin, swap bool
+	priority := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pin", "-pin":
+			pin = true
+		case "--swap", "-swap":
+			swap = true
+		case "--priority", "-priority":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					priority = n
+				}
+				i++
+			}
+		default:
+			if strings.HasPrefix(args[i], "--priority=") {
+				if n, err := strconv.Atoi(strings.TrimPrefix(args[i], "--priority=")); err == nil {
+					priority = n
+				}
+				continue
+			}
+			die("unknown flag: %s (usage: flock model load <id> [--swap] [--pin] [--priority N])", args[i])
+		}
+	}
+	cfg := loadConfigOrExit()
+	body, _ := json.Marshal(map[string]any{"swap": swap, "pin": pin, "priority": priority})
+	resp, err := adminCall(context.Background(), cfg, "POST", "/admin/v1/models/"+id+"/load", body)
+	if err != nil {
+		renderLoadRefusal(id, resp, err)
+		return
+	}
+	var out struct {
+		Plan struct {
+			AlreadyResident bool `json:"already_resident"`
+			Victims         []struct {
+				CatalogID string `json:"catalog_id"`
+				SizeBytes int64  `json:"size_bytes"`
+			} `json:"victims"`
+		} `json:"plan"`
+	}
+	_ = json.Unmarshal(resp, &out)
+	switch {
+	case out.Plan.AlreadyResident:
+		ok(os.Stdout, "%s is already resident — desired placement updated (pin=%t)", id, pin)
+	case len(out.Plan.Victims) > 0:
+		for _, v := range out.Plan.Victims {
+			note(os.Stdout, "evicted %s (freed %.1f GB)", v.CatalogID, float64(v.SizeBytes)/1e9)
+		}
+		ok(os.Stdout, "loaded %s%s", id, pinSuffix(pin))
+	default:
+		ok(os.Stdout, "loaded %s%s", id, pinSuffix(pin))
+	}
+}
+
+func pinSuffix(pin bool) string {
+	if pin {
+		return " (pinned — exempt from eviction and idle TTL)"
+	}
+	return ""
+}
+
+// renderLoadRefusal turns the structured 409/422 admission errors into
+// actionable CLI output instead of a raw HTTP status.
+func renderLoadRefusal(id string, resp []byte, callErr error) {
+	var body struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Plan struct {
+			Victims []struct {
+				CatalogID string `json:"catalog_id"`
+				SizeBytes int64  `json:"size_bytes"`
+				LastUsed  int64  `json:"last_used"`
+			} `json:"victims"`
+		} `json:"plan"`
+	}
+	if json.Unmarshal(resp, &body) != nil || body.Error.Type == "" {
+		die("load %s: %v", id, callErr)
+	}
+	switch body.Error.Type {
+	case "needs_swap":
+		warn(os.Stdout, "%s", body.Error.Message)
+		for _, v := range body.Plan.Victims {
+			note(os.Stdout, "  would evict %s (%.1f GB)", v.CatalogID, float64(v.SizeBytes)/1e9)
+		}
+		die("rerun with `flock model load %s --swap` to accept the eviction(s)", id)
+	case "blocked_by_pinned":
+		die("%s\n  (see pinned models with `flock model ps`; unpin by reloading without --pin, or unload one)", body.Error.Message)
+	case "impossible":
+		die("%s", body.Error.Message)
+	default:
+		die("load %s: %s", id, body.Error.Message)
+	}
+}
+
+// modelPs renders the live memory picture: which models occupy engine
+// RAM right now, their sizes, pins, and the node's remaining budget.
+func modelPs(asJSON bool) {
+	cfg := loadConfigOrExit()
+	resp, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/memory", nil)
+	if err != nil {
+		die("memory status: %v", err)
+	}
+	if asJSON {
+		fmt.Println(string(resp))
+		return
+	}
+	var st struct {
+		Supported     bool  `json:"supported"`
+		Exclusive     bool  `json:"exclusive"`
+		TotalRAMBytes int64 `json:"total_ram_bytes"`
+		BudgetBytes   int64 `json:"budget_bytes"`
+		ResidentBytes int64 `json:"resident_bytes"`
+		FreeBytes     int64 `json:"free_bytes"`
+		Resident      []struct {
+			CatalogID string     `json:"catalog_id"`
+			SizeBytes int64      `json:"size_bytes"`
+			VRAMBytes int64      `json:"vram_bytes"`
+			Pinned    bool       `json:"pinned"`
+			Priority  int        `json:"priority"`
+			LastUsed  *time.Time `json:"last_used"`
+		} `json:"resident"`
+	}
+	if err := json.Unmarshal(resp, &st); err != nil {
+		die("decode memory status: %v", err)
+	}
+	if !st.Supported {
+		fmt.Println(dim("(engine cannot report residency — memory view requires Ollama)"))
+		return
+	}
+	gb := func(b int64) string { return fmt.Sprintf("%.1f GB", float64(b)/1e9) }
+	if len(st.Resident) == 0 {
+		fmt.Println(dim("(no models resident in engine memory)"))
+	} else {
+		fmt.Printf("%s %s %s %s %s %s\n",
+			bold(fmt.Sprintf("%-26s", "MODEL")),
+			bold(fmt.Sprintf("%9s", "RAM")),
+			bold(fmt.Sprintf("%9s", "VRAM")),
+			bold(fmt.Sprintf("%-7s", "PINNED")),
+			bold(fmt.Sprintf("%4s", "PRIO")),
+			bold("LAST USED"))
+		for _, m := range st.Resident {
+			pinned := dim("—")
+			if m.Pinned {
+				pinned = green("pinned")
+			}
+			last := dim("never")
+			if m.LastUsed != nil {
+				last = dim(m.LastUsed.Format("2006-01-02 15:04"))
+			}
+			fmt.Printf("%s %9s %9s %-16s %4d %s\n",
+				padCyan(m.CatalogID, 26), gb(m.SizeBytes), gb(m.VRAMBytes), pinned, m.Priority, last)
+		}
+	}
+	fmt.Println()
+	mode := ""
+	if st.Exclusive {
+		mode = " · " + yellow("exclusive mode")
+	}
+	fmt.Printf("%s %s resident of %s budget (%s total RAM) · %s free%s\n",
+		bold("Memory:"), gb(st.ResidentBytes), gb(st.BudgetBytes), gb(st.TotalRAMBytes), gb(st.FreeBytes), mode)
+	fmt.Println(dim("Tip: `flock model load <id> --swap` evicts least-recently-used models to make room. `--pin` protects a model."))
 }
 
 // catalogHasID is a cheap membership check used to decide whether to fall
@@ -648,6 +869,9 @@ func modelRemove(id string) {
 	if err := st.Models().Delete(context.Background(), id); err != nil {
 		die("store delete: %v", err)
 	}
+	// Forget any desired placement so the next `flock up` doesn't try to
+	// restore a model whose weights are gone.
+	_ = st.DesiredPlacements().Delete(context.Background(), "local", id)
 	ok(os.Stdout, "removed: %s", id)
 }
 

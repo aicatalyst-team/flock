@@ -188,7 +188,7 @@ Auth is HMAC-based: the leader and agent both sign requests with the per-node wo
 CREATE TABLE model_placements (
     node_id    TEXT NOT NULL,    -- "local" for the leader, or a worker node id
     model_id   TEXT NOT NULL,    -- the engine-native model id (e.g. "llama3.2:1b")
-    status     TEXT NOT NULL,    -- "ready" | "loading" | "error"
+    status     TEXT NOT NULL,    -- "ready" | "loading" | "draining" | "error"
     last_seen  INTEGER NOT NULL,
     PRIMARY KEY (node_id, model_id)
 );
@@ -196,6 +196,39 @@ CREATE INDEX idx_placements_model ON model_placements(model_id);
 ```
 
 Worker heartbeats carry `loaded_models`; the leader calls `PlacementStore.ReplaceForNode(nodeID, …)` to reconcile atomically every 5s. Local placements (`node_id="local"`) are populated by `cmd_model.go` on add and by `cmd_up.go` on startup (it lists the leader's local engine).
+
+`GetByModel` returns only `status="ready"` rows, so flipping a placement to
+`draining` instantly unroutes it — that's the hook the memory lifecycle uses
+during evictions (drain → unload → back to `ready`, since the model stays
+installed and demand-loadable).
+
+### Memory lifecycle (`internal/lifecycle`)
+
+Placements say what a node *can serve* (installed); they say nothing about
+what occupies RAM. The lifecycle manager closes that gap for the **local
+engine**:
+
+- **Residency ground truth** comes from the engine, not the DB: Ollama's
+  `/api/ps` reports per-model RAM/VRAM bytes (`engines.ResidentLister`).
+  Engines without the interface degrade to budget-only admission.
+- **Admission**: `flock model load` / `POST /admin/v1/models/{id}/load`
+  checks footprint (weights + ~20%) against `total RAM × (1 − reserve)` minus
+  live resident bytes, and refuses rather than overcommit.
+- **Evict-and-swap**: with `swap`, victims are chosen LRU (from the usage
+  table) among non-pinned residents, drained via the `draining` placement
+  status + the router's in-flight counts, unloaded (`keep_alive:0`), and
+  audit-logged (`model_evicted`).
+- **Desired placements** (`desired_placements` table: priority, pinned) are
+  the declarative intent — `flock up` restores them in priority order in a
+  background goroutine. Pinning maps to Ollama `keep_alive:-1`.
+- **Release**: `flock down` unloads all resident models by default; Ctrl-C of
+  `flock up` does not (dev-restart friendliness — the supervisor still kills
+  any Flock-spawned engine processes either way).
+
+Worker-side enforcement is deferred: workers load models via their own
+`flock model add`, the leader has no remote-unload path, and heartbeats
+rewrite worker placements every 5s (they never touch `node_id="local"`, which
+is why local draining is safe).
 
 ### Sharding auto-orchestration (v0.4)
 

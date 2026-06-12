@@ -129,7 +129,11 @@ async function api(path, opts = {}) {
   }
   if (!r.ok) {
     const t = await r.text();
-    throw new Error(`${r.status}: ${t}`);
+    const err = new Error(`${r.status}: ${t}`);
+    // Attach the parsed body when the server sent structured JSON —
+    // handlers like loadModelMem branch on error.type (e.g. needs_swap).
+    try { err.body = JSON.parse(t); } catch { /* non-JSON error body */ }
+    throw err;
   }
   if (r.headers.get("content-type")?.includes("application/json")) return r.json();
   return r.text();
@@ -1506,9 +1510,12 @@ async function renderModels() {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
   }
   try {
-    const [installed, catalog] = await Promise.all([
+    const [installed, catalog, memory] = await Promise.all([
       api("/admin/v1/models"),
       api("/admin/v1/catalog"),
+      // Memory view is best-effort: older leaders (or engines without a
+      // residency protocol) just hide the card.
+      api("/admin/v1/memory").catch(() => null),
     ]);
     // Build a lookup so we can join license + capabilities onto the installed row.
     const byID = {};
@@ -1538,7 +1545,8 @@ async function renderModels() {
         new Date(m.InstalledAt).toLocaleString(),
         `<div class="flex gap-3">
            <button class="text-xs text-emerald-700 hover:underline" onclick="testInPlayground('${m.CatalogID}')" title="Open Playground pre-wired to this model">test</button>
-           <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${m.CatalogID}')" title="Drop the model from engine RAM without deleting weights">unload</button>
+           <button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${m.CatalogID}')" title="Bring into engine RAM now (memory-aware: offers an LRU swap when it doesn't fit)">load</button>
+           <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${m.CatalogID}')" title="Drain, then drop the model from engine RAM without deleting weights">unload</button>
            <button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>
          </div>`,
       ];
@@ -1559,6 +1567,8 @@ async function renderModels() {
           <p class="text-xs text-slate-500 w-full">Skips the curated catalog. Anything the configured engine can pull works here. For curated entries, scroll to the Catalog browser below.</p>
         </div>
       </div>
+
+      ${memoryCard(memory)}
 
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">Installed models</h2>
@@ -1587,6 +1597,70 @@ async function renderModels() {
     renderCatalogTable();
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+// memoryCard renders the live engine-memory picture from /admin/v1/memory:
+// which models occupy RAM right now, what's pinned, and the remaining
+// admission budget. Hidden when the endpoint is unavailable or the
+// engine can't report residency (only Ollama can today).
+function memoryCard(mem) {
+  if (!mem || !mem.supported) return "";
+  const gb = (b) => (b / 1e9).toFixed(1) + " GB";
+  const pct = mem.budget_bytes > 0 ? Math.min(100, Math.round((mem.resident_bytes / mem.budget_bytes) * 100)) : 0;
+  const barColor = pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
+  const rows = (mem.resident || []).map((r) => `
+      <div class="flex items-center gap-3 text-sm py-1">
+        <span class="code flex-1">${r.catalog_id}</span>
+        <span class="text-xs text-slate-500 font-mono w-20 text-right">${gb(r.size_bytes)}</span>
+        ${r.pinned
+          ? `<span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 rounded" title="Exempt from eviction and the engine's idle TTL">pinned</span>`
+          : `<button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${r.catalog_id}', true)" title="Pin: exempt from eviction + idle TTL">pin</button>`}
+        <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${r.catalog_id}')">unload</button>
+      </div>`).join("");
+  return `
+      <div class="bg-white border border-slate-200 rounded mb-4">
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-sm font-semibold">Engine memory</div>
+            <div class="text-xs text-slate-500 font-mono">${gb(mem.resident_bytes)} / ${gb(mem.budget_bytes)} budget · ${gb(mem.free_bytes)} free${mem.exclusive ? ' · <span class="text-amber-700">exclusive mode</span>' : ""}</div>
+          </div>
+          <div class="w-full bg-slate-100 rounded h-2 mb-3"><div class="${barColor} h-2 rounded" style="width:${pct}%"></div></div>
+          ${rows || '<div class="text-sm text-slate-400">No models resident — they load on first request, or use the load button below.</div>'}
+        </div>
+      </div>`;
+}
+
+// loadModelMem brings a model into engine RAM via the memory-aware
+// admin endpoint. Mirrors `flock model load <id> [--swap] [--pin]`:
+// when the model doesn't fit, the server answers 409 with the
+// least-recently-used victims a swap would evict, and we ask the
+// operator to confirm before retrying with swap:true.
+async function loadModelMem(id, pin = false, swap = false) {
+  try {
+    const r = await api(`/admin/v1/models/${encodeURIComponent(id)}/load`, {
+      method: "POST",
+      body: JSON.stringify({ swap, pin }),
+    });
+    const evicted = (r.plan && r.plan.victims) || [];
+    if (evicted.length) {
+      toast(`Loaded ${id} — evicted ${evicted.map((v) => v.catalog_id).join(", ")}`, "ok");
+    } else {
+      toast(`Loaded ${id}${pin ? " (pinned)" : ""}`, "ok");
+    }
+    renderModels();
+  } catch (e) {
+    const body = e.body || {};
+    const errType = body.error && body.error.type;
+    if (errType === "needs_swap" && !swap) {
+      const victims = ((body.plan && body.plan.victims) || [])
+        .map((v) => `${v.catalog_id} (${(v.size_bytes / 1e9).toFixed(1)} GB)`).join(", ");
+      if (confirm(`${id} doesn't fit in free memory.\n\nEvict least-recently-used model(s): ${victims}?\n\n(Evicted models stay installed and reload on demand.)`)) {
+        return loadModelMem(id, pin, true);
+      }
+      return;
+    }
+    toast((body.error && body.error.message) || `Load failed: ${e.message}`, "err");
   }
 }
 

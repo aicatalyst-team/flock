@@ -22,6 +22,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/controlplane"
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/lifecycle"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/scheduler"
 	"github.com/hadihonarvar/flock/internal/store"
@@ -34,11 +35,13 @@ func cmdUp(args []string) {
 	noWizard := fs.Bool("no-wizard", false, "skip the interactive first-run prompt; combine with --auto-pull=false for a fully quiet boot")
 	unloadOnExit := fs.Bool("unload-on-exit", os.Getenv("FLOCK_UNLOAD_ON_EXIT") == "1",
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (FLOCK_UNLOAD_ON_EXIT=1 sets the default)")
+	exclusive := fs.Bool("exclusive", false,
+		"one resident model per machine: loading a model evicts every other non-pinned model first (FLOCK_EXCLUSIVE=1 or placement.exclusive in config also set this)")
 	fs.Usage = func() {
 		showHelp(helpSpec{
 			name:    "up",
 			summary: "start the local node (becomes the cluster leader on first run)",
-			usage:   "flock up [--config <path>] [--auto-pull=false] [--no-wizard]",
+			usage:   "flock up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive]",
 			flags:   fs,
 			examples: []string{
 				"flock up",
@@ -202,8 +205,33 @@ func cmdUp(args []string) {
 	// 11. Start server with signal context
 	srv := controlplane.NewServer(cfg, st, eng, cat, log, orch)
 	srv.Version = version
+
+	// 11a. Memory-lifecycle manager: admission ("does it fit?"), LRU
+	//      evict-and-swap, and desired-placement restore for the local
+	//      engine. AttachLifecycle wires it to the router's in-flight
+	//      counts so evictions drain before unloading.
+	mgr := lifecycle.New(st, eng, cat, caps.RAMGB, log)
+	mgr.Exclusive = cfg.Placement.Exclusive || *exclusive
+	if cfg.Placement.ReservePercent > 0 {
+		mgr.ReservePercent = cfg.Placement.ReservePercent
+	}
+	if cfg.Placement.DrainTimeoutSeconds > 0 {
+		mgr.DrainTimeout = time.Duration(cfg.Placement.DrainTimeoutSeconds) * time.Second
+	}
+	srv.AttachLifecycle(mgr)
+	if mgr.Exclusive {
+		note(os.Stdout, "exclusive placement: loading a model evicts every other non-pinned model")
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// 11b. Restore desired placements (models the operator loaded/pinned
+	//      before the last shutdown) in the background — a 40 GB warm
+	//      load must not block the gateway from serving.
+	if engineOK {
+		go mgr.Restore(ctx)
+	}
 
 	if err := srv.Start(ctx); err != nil {
 		die("server: %v", err)

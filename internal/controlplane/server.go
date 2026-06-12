@@ -27,6 +27,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/guardrails"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/events"
+	"github.com/hadihonarvar/flock/internal/lifecycle"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/router"
 	"github.com/hadihonarvar/flock/internal/scheduler"
@@ -50,6 +51,7 @@ type Server struct {
 
 	router      *router.Router
 	orch        *scheduler.Orchestrator
+	lifecycle   *lifecycle.Manager
 	openaiH     *api.Handler
 	anthropicH  *api.AnthropicHandler
 	egressH     *api.EgressHandler
@@ -460,6 +462,10 @@ func (s *Server) routes() http.Handler {
 			r.Post("/models", s.addModel)
 			r.Delete("/models/{id}", s.deleteModel)
 			r.Post("/models/{id}/unload", s.unloadModel)
+			r.Post("/models/{id}/load", s.loadModel)
+
+			// Memory: live engine residency + the desired-placement set.
+			r.Get("/memory", s.memoryStatus)
 
 			// Tokens
 			r.Get("/tokens", s.listTokens)
@@ -916,6 +922,7 @@ func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = s.engine.Delete(r.Context(), engineName)
 		_ = s.store.Placements().Delete(r.Context(), "local", engineName)
+		_ = s.store.DesiredPlacements().Delete(r.Context(), "local", id)
 	}
 	if err := s.store.Models().Delete(r.Context(), id); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -975,8 +982,32 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 
 // unloadModel asks the engine to drop the model from RAM without
 // deleting weights from disk. Mirrors `flock model unload`.
+//
+// With the lifecycle manager attached (the normal `flock up` path) the
+// unload also drains in-flight requests first and clears the model's
+// desired-placement row so it stays unloaded across restarts. The
+// legacy direct-engine path below remains for embedded uses without a
+// manager.
 func (s *Server) unloadModel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if s.lifecycle != nil {
+		err := s.lifecycle.Unload(r.Context(), id, actorFrom(r))
+		switch {
+		case errors.Is(err, lifecycle.ErrNotInstalled):
+			writeJSONError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, engines.ErrUnloadNotSupported):
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status": "noop", "id": id,
+				"reason": s.engine.Name() + " does not support online unload",
+			})
+		case err != nil:
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		default:
+			s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
+			writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
+		}
+		return
+	}
 	m, _ := s.store.Models().Get(r.Context(), id)
 	engineName := id
 	if m != nil {

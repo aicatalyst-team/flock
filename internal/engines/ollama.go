@@ -177,6 +177,68 @@ func (o *Ollama) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, er
 	}, nil
 }
 
+// Resident returns the models currently loaded in Ollama's memory via
+// /api/ps, with their actual RAM/VRAM byte footprints. This is the
+// ground truth for admission decisions — /api/tags (List) only says
+// what's installed on disk.
+func (o *Ollama) Resident(ctx context.Context) ([]ResidentModel, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.endpoint+"/api/ps", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list resident models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama ps: %s: %s", resp.Status, string(b))
+	}
+	var body struct {
+		Models []struct {
+			Name     string `json:"name"`
+			Size     int64  `json:"size"`
+			SizeVRAM int64  `json:"size_vram"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode resident models: %w", err)
+	}
+	out := make([]ResidentModel, 0, len(body.Models))
+	for _, m := range body.Models {
+		out = append(out, ResidentModel{Name: m.Name, SizeBytes: m.Size, VRAMBytes: m.SizeVRAM})
+	}
+	return out, nil
+}
+
+// Load warm-loads a model into memory by sending a generate request with
+// no prompt — Ollama's documented load mechanism. pin sets keep_alive=-1
+// so the model is exempt from Ollama's idle TTL; unpinned loads use the
+// daemon's default keep_alive.
+func (o *Ollama) Load(ctx context.Context, modelID string, pin bool) error {
+	payload := map[string]any{"model": modelID}
+	if pin {
+		payload["keep_alive"] = -1
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("load request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("load failed: %s: %s", resp.Status, string(b))
+	}
+	return nil
+}
+
 // Unload asks Ollama to drop the model from memory by sending a no-op
 // generate request with keep_alive=0. This is Ollama's documented
 // unload mechanism — it does not delete the weights from disk.
@@ -400,4 +462,8 @@ func buildOllamaChatBody(req ChatRequest) map[string]any {
 }
 
 // ensure interface compliance at compile time
-var _ Engine = (*Ollama)(nil)
+var (
+	_ Engine         = (*Ollama)(nil)
+	_ ResidentLister = (*Ollama)(nil)
+	_ Loader         = (*Ollama)(nil)
+)

@@ -23,6 +23,7 @@ type Store interface {
 	Models() ModelStore
 	Nodes() NodeStore
 	Placements() PlacementStore
+	DesiredPlacements() DesiredPlacementStore
 	Shards() ShardStore
 	Usage() UsageStore
 	Audit() AuditStore
@@ -161,6 +162,38 @@ type PlacementStore interface {
 	GetByNode(ctx context.Context, nodeID string) ([]Placement, error)
 	ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error
 	Delete(ctx context.Context, nodeID, modelID string) error
+	// SetStatus flips a single placement's status in place (e.g. ready ↔
+	// draining during an eviction) without touching last_seen semantics.
+	// A draining placement is invisible to GetByModel, so the router
+	// stops sending new requests to it.
+	SetStatus(ctx context.Context, nodeID, modelID, status string) error
+}
+
+// DesiredPlacement is the operator's declared intent that a node should
+// keep a model resident in memory. Distinct from Placement (which is
+// observational: "this node can serve this model right now").
+//
+// ModelID is the CATALOG id — surfaces map it to the engine-native name
+// (Ollama tag, HF repo) via the models table when talking to an engine.
+//
+// Priority orders both restore-on-boot (high first) and eviction (low
+// first). Pinned placements are never chosen as eviction victims and are
+// loaded with Ollama keep_alive=-1 so the engine's idle TTL skips them.
+type DesiredPlacement struct {
+	NodeID    string    `json:"node_id"`
+	ModelID   string    `json:"model_id"`
+	Priority  int       `json:"priority"`
+	Pinned    bool      `json:"pinned"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type DesiredPlacementStore interface {
+	Upsert(ctx context.Context, d DesiredPlacement) error
+	Get(ctx context.Context, nodeID, modelID string) (*DesiredPlacement, error)
+	// ListByNode returns the node's desired set ordered by priority DESC,
+	// created_at ASC — the order Restore loads them in.
+	ListByNode(ctx context.Context, nodeID string) ([]DesiredPlacement, error)
+	Delete(ctx context.Context, nodeID, modelID string) error
 }
 
 // Shard is one piece of a model that has been split across multiple nodes.
@@ -252,6 +285,11 @@ type BudgetStore interface {
 type UsageStore interface {
 	Record(ctx context.Context, u Usage) error
 	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
+	// LastUsedByModel returns the most recent request timestamp per model
+	// id. Models with no usage rows are absent from the map — eviction
+	// treats them as least-recently-used. Used by the lifecycle manager's
+	// LRU victim ordering.
+	LastUsedByModel(ctx context.Context) (map[string]time.Time, error)
 	RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error)
 	Recent(ctx context.Context, limit int) ([]Usage, error)
 	// Breakdown aggregates the usage table by time bucket and the
@@ -341,6 +379,9 @@ func (s *sqliteStore) APIKeys() APIKeyStore       { return &sqliteAPIKeys{db: s.
 func (s *sqliteStore) Models() ModelStore         { return &sqliteModels{db: s.db} }
 func (s *sqliteStore) Nodes() NodeStore           { return &sqliteNodes{db: s.db} }
 func (s *sqliteStore) Placements() PlacementStore { return &sqlitePlacements{db: s.db} }
+func (s *sqliteStore) DesiredPlacements() DesiredPlacementStore {
+	return &sqliteDesiredPlacements{db: s.db}
+}
 func (s *sqliteStore) Shards() ShardStore         { return &sqliteShards{db: s.db} }
 func (s *sqliteStore) Usage() UsageStore          { return &sqliteUsage{db: s.db} }
 func (s *sqliteStore) Audit() AuditStore          { return &sqliteAudit{db: s.db} }
@@ -396,6 +437,15 @@ CREATE TABLE IF NOT EXISTS model_placements (
     PRIMARY KEY (node_id, model_id)
 );
 CREATE INDEX IF NOT EXISTS idx_placements_model ON model_placements(model_id);
+
+CREATE TABLE IF NOT EXISTS desired_placements (
+    node_id    TEXT NOT NULL,
+    model_id   TEXT NOT NULL,
+    priority   INTEGER NOT NULL DEFAULT 0,
+    pinned     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, model_id)
+);
 
 CREATE TABLE IF NOT EXISTS shards (
     id          TEXT PRIMARY KEY,
@@ -919,6 +969,19 @@ func (s *sqlitePlacements) Delete(ctx context.Context, nodeID, modelID string) e
 	return err
 }
 
+func (s *sqlitePlacements) SetStatus(ctx context.Context, nodeID, modelID, status string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE model_placements SET status = ?, last_seen = ? WHERE node_id = ? AND model_id = ?`,
+		status, time.Now().Unix(), nodeID, modelID)
+	if err != nil {
+		return fmt.Errorf("set placement status: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no placement for %s on %s", modelID, nodeID)
+	}
+	return nil
+}
+
 func scanPlacements(rows *sql.Rows) ([]Placement, error) {
 	var out []Placement
 	for rows.Next() {
@@ -931,6 +994,75 @@ func scanPlacements(rows *sql.Rows) ([]Placement, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ---- desired placements ----
+
+type sqliteDesiredPlacements struct{ db *sql.DB }
+
+func (s *sqliteDesiredPlacements) Upsert(ctx context.Context, d DesiredPlacement) error {
+	if d.CreatedAt.IsZero() {
+		d.CreatedAt = time.Now()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO desired_placements(node_id, model_id, priority, pinned, created_at)
+		 VALUES(?,?,?,?,?)
+		 ON CONFLICT(node_id, model_id) DO UPDATE SET
+		   priority=excluded.priority,
+		   pinned=excluded.pinned`,
+		d.NodeID, d.ModelID, d.Priority, boolToInt(d.Pinned), d.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("upsert desired placement: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteDesiredPlacements) Get(ctx context.Context, nodeID, modelID string) (*DesiredPlacement, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT node_id, model_id, priority, pinned, created_at
+		 FROM desired_placements WHERE node_id = ? AND model_id = ?`, nodeID, modelID)
+	var d DesiredPlacement
+	var pinned int
+	var created int64
+	if err := row.Scan(&d.NodeID, &d.ModelID, &d.Priority, &pinned, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan desired placement: %w", err)
+	}
+	d.Pinned = pinned != 0
+	d.CreatedAt = time.Unix(created, 0)
+	return &d, nil
+}
+
+func (s *sqliteDesiredPlacements) ListByNode(ctx context.Context, nodeID string) ([]DesiredPlacement, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, model_id, priority, pinned, created_at
+		 FROM desired_placements WHERE node_id = ?
+		 ORDER BY priority DESC, created_at ASC`, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("query desired placements: %w", err)
+	}
+	defer rows.Close()
+	var out []DesiredPlacement
+	for rows.Next() {
+		var d DesiredPlacement
+		var pinned int
+		var created int64
+		if err := rows.Scan(&d.NodeID, &d.ModelID, &d.Priority, &pinned, &created); err != nil {
+			return nil, fmt.Errorf("scan desired placement: %w", err)
+		}
+		d.Pinned = pinned != 0
+		d.CreatedAt = time.Unix(created, 0)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteDesiredPlacements) Delete(ctx context.Context, nodeID, modelID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM desired_placements WHERE node_id = ? AND model_id = ?`, nodeID, modelID)
+	return err
 }
 
 // ---- shards ----
@@ -1050,6 +1182,25 @@ func (s *sqliteUsage) SumTokensSince(ctx context.Context, apiKeyID string, since
 		return 0, err
 	}
 	return sum.Int64, nil
+}
+
+func (s *sqliteUsage) LastUsedByModel(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT model, MAX(ts) FROM usage GROUP BY model`)
+	if err != nil {
+		return nil, fmt.Errorf("last used by model: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var model string
+		var ts int64
+		if err := rows.Scan(&model, &ts); err != nil {
+			return nil, fmt.Errorf("scan last used: %w", err)
+		}
+		out[model] = time.Unix(ts, 0)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
