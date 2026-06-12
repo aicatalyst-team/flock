@@ -822,6 +822,7 @@ placement:                            # memory lifecycle for this node's local e
 | `FLOCK_PLACEMENT_RESERVE_PERCENT` | `placement.reserve_percent` — RAM held back from the admission budget (default 20) |
 | `FLOCK_PLACEMENT_DRAIN_TIMEOUT_SECONDS` | `placement.drain_timeout_seconds` — eviction drain bound (default 30) |
 | `FLOCK_UNLOAD_ON_EXIT` | `1` → Ctrl-C of `flock up` also unloads engine-resident models (the `flock down` path already does this by default) |
+| `FLOCK_SKIP_SOURCE_CHECK` | `1` → skip the pre-flight HEAD probe that `flock model add` runs against the upstream registry (use for air-gapped mirrors / custom registries) |
 
 ### Not yet configurable (roadmap)
 
@@ -990,6 +991,7 @@ flock model add --from ./my-model.yaml           # from a user-supplied catalog 
 
 This:
 1. Checks `catalog/<id>.yaml`'s `hardware.min_ram_gb` (and `min_vram_gb`) against the cluster — installs that overshoot the floor are refused with a clear error. Pass `--force` to override (e.g. when you know swap or a quantization knob will save you).
+1. **Verifies the upstream exists** — a 5s HEAD against the Ollama registry / HuggingFace. A typo'd `hf:owner/repo` or renamed tag is refused immediately with the URL that 404'd, instead of "succeeding" and failing later at engine launch. Network trouble only warns (never blocks); `FLOCK_SKIP_SOURCE_CHECK=1` for air-gapped mirrors. `--dry-run` shows the same check as a "Source check" row.
 2. Records the model in the registry
 3. Picks the best node(s) to host it (or shards across multiple)
 4. Pulls the weights to those nodes (with resume support)

@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,15 +60,23 @@ func TestCatalogSourcesReachable(t *testing.T) {
 			defer func() { <-sem }()
 
 			r := result{id: e.ID}
-			switch e.Source.Type {
-			case "ollama":
-				r.ok, r.reason = headOllama(ctx, client, e.Source.OllamaName)
-			case "huggingface":
-				r.ok, r.reason = headHuggingFace(ctx, client, e.Source.Repo, e.Source.File)
-			case "file":
+			// "file" sources are local-only — skip rather than probe so
+			// CI (which has no model files) doesn't fail them.
+			if e.Source.Type == "file" {
 				r.skipped = "source.type=file (local-only; can't verify without the file)"
+				results <- r
+				return
+			}
+			verdict, reason := models.ProbeSource(ctx, client, &e)
+			switch verdict {
+			case models.ProbeOK:
+				r.ok = true
+			case models.ProbeSkipped:
+				r.skipped = reason
 			default:
-				r.skipped = fmt.Sprintf("unknown source.type=%q", e.Source.Type)
+				// The nightly probe treats "couldn't verify" the same as
+				// "missing" — its whole job is to make a human look.
+				r.reason = reason
 			}
 			results <- r
 		}()
@@ -93,60 +99,7 @@ func TestCatalogSourcesReachable(t *testing.T) {
 	t.Logf("catalog live check: %d entries, %d skipped, %d failed", len(cat), skipped, failed)
 }
 
-// headOllama checks that an Ollama tag exists in the public registry.
-// Tag format is "name:tag" or just "name" (which means name:latest).
-func headOllama(ctx context.Context, client *http.Client, fullName string) (bool, string) {
-	if fullName == "" {
-		return false, "empty ollama_name"
-	}
-	name, tag, found := strings.Cut(fullName, ":")
-	if !found {
-		tag = "latest"
-	}
-	// Library namespace for unscoped names; scoped names look like "owner/name".
-	registryPath := name
-	if !strings.Contains(name, "/") {
-		registryPath = "library/" + name
-	}
-	url := fmt.Sprintf("https://registry.ollama.ai/v2/%s/manifests/%s", registryPath, tag)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	// Ollama registry needs an Accept header for the manifest media type.
-	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Sprintf("HEAD %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		return true, ""
-	}
-	return false, fmt.Sprintf("HEAD %s → %s", url, resp.Status)
-}
-
-// headHuggingFace checks that an HF repo (and optional specific file) exists.
-func headHuggingFace(ctx context.Context, client *http.Client, repo, file string) (bool, string) {
-	if repo == "" {
-		return false, "empty source.repo"
-	}
-	target := file
-	if target == "" {
-		target = "README.md"
-	}
-	url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repo, target)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Sprintf("HEAD %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusFound:
-		return true, ""
-	case http.StatusUnauthorized, http.StatusForbidden:
-		// Repo exists but is gated (requires accepting a license or HF login).
-		// For our "catch typos / removed repos" purpose, this is success.
-		return true, ""
-	default:
-		return false, fmt.Sprintf("HEAD %s → %s", url, resp.Status)
-	}
-}
+// The HEAD-probe implementations live in internal/models/probe.go —
+// shared with `flock model add`'s pre-flight check and the admin
+// install endpoint, so a source this test would flag is also refused
+// at install time.

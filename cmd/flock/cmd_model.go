@@ -51,6 +51,7 @@ func cmdModel(args []string) {
 		notes: []string{
 			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
 			"Override with --force when you know swap, quantization, or sharding will compensate.",
+			"`add` also HEAD-checks the upstream (Ollama registry / HuggingFace) and refuses on a 404 — so a typo'd hf:owner/repo fails here, not at engine launch. Network trouble only warns. FLOCK_SKIP_SOURCE_CHECK=1 skips the probe (air-gapped mirrors).",
 			"`load` is memory-aware: it checks live engine residency (Ollama /api/ps) against this machine's RAM budget and refuses rather than overcommit; `--swap` evicts least-recently-used, non-pinned models (drained first, audit-logged). Loaded/pinned models are restored on the next `flock up`.",
 			"For sharded models (split across multiple machines) see `flock shard --help`.",
 			"For the complete per-model walkthrough see MODELS.md in the repo.",
@@ -562,6 +563,18 @@ func modelAddDryRun(id string) {
 		} else {
 			fmt.Printf("  %sHardware%s      %sOK%s\n", bold, reset, dim, reset)
 		}
+		// Upstream reachability — same probe the real install runs.
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), models.ProbeTimeout)
+		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+		probeCancel()
+		switch verdict {
+		case models.ProbeOK:
+			fmt.Printf("  %sSource check%s  %supstream exists%s\n", bold, reset, dim, reset)
+		case models.ProbeNotFound:
+			fmt.Printf("  %sSource check%s  NOT FOUND — install would refuse (%s)\n", bold, reset, reason)
+		case models.ProbeIndeterminate:
+			fmt.Printf("  %sSource check%s  %scould not verify (%s)%s\n", bold, reset, dim, reason, reset)
+		}
 		// Rough ETA. Assume 50 MB/s sustained over LAN/HF — pessimistic
 		// enough that it's a useful "is this worth starting now?" number.
 		if entry.SizeBytes > 0 {
@@ -613,6 +626,24 @@ func modelAddEntry(entry *models.Entry, force bool) {
 			}
 		} else {
 			warn(os.Stdout, "no hardware floor known for %s — proceeding without check (use a catalog model for pre-flight checks)", entry.ID)
+		}
+	}
+
+	// Pre-flight source probe — a typo'd `hf:owner/repo` or a renamed
+	// Ollama tag should fail HERE with the upstream URL, not later at
+	// engine launch (vLLM/MLX/llama-server Pulls are no-ops, so without
+	// this the add would "succeed" and the failure would surface as a
+	// mystery engine crash). 404 is certain → refuse; network trouble is
+	// not → warn and proceed. FLOCK_SKIP_SOURCE_CHECK=1 bypasses.
+	{
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), models.ProbeTimeout)
+		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+		probeCancel()
+		switch verdict {
+		case models.ProbeNotFound:
+			die("source for %s does not exist: %s", entry.ID, reason)
+		case models.ProbeIndeterminate:
+			warn(os.Stdout, "could not verify source for %s (%s) — proceeding anyway", entry.ID, reason)
 		}
 	}
 

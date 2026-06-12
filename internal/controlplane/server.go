@@ -839,6 +839,22 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ID+" (try a scheme-prefixed id like hf:owner/repo, ollama:tag, or file:/path)")
 		return
 	}
+	// Pre-flight source probe — mirror the CLI: refuse on a certain 404
+	// so the dashboard's "Add custom model" input gets a clear error
+	// instead of a deferred engine-launch failure; warn-and-proceed when
+	// the upstream merely couldn't be verified (network trouble).
+	{
+		probeCtx, probeCancel := context.WithTimeout(r.Context(), models.ProbeTimeout)
+		verdict, reason := models.ProbeSource(probeCtx, nil, entry)
+		probeCancel()
+		switch verdict {
+		case models.ProbeNotFound:
+			writeJSONError(w, http.StatusNotFound, "source for "+entry.ID+" does not exist: "+reason)
+			return
+		case models.ProbeIndeterminate:
+			s.log.Warn("could not verify model source — proceeding", "model", entry.ID, "reason", reason)
+		}
+	}
 	// Sharded models delegate to the orchestrator.
 	if entry.Sharding.Required {
 		if s.orch == nil {
