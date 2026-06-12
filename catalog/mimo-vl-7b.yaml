@@ -1,13 +1,12 @@
 id: mimo-vl-7b
 display_name: Xiaomi MiMo-VL 7B (vision-language — chart, UI, screenshots)
 source:
-  type: ollama
-  ollama_name: mimo-vl:7b
+  type: huggingface
+  repo: XiaomiMiMo/MiMo-VL-7B-RL
 size_bytes: 4800000000
-quant: q4_k_m
 context_window: 32768
 capabilities: [chat, vision]
-recommended_engines: [ollama, vllm, llamacpp]
+recommended_engines: [vllm, mlx]
 hardware:
   min_ram_gb: 8
 tags: [vision, small, xiaomi, apache-2.0]

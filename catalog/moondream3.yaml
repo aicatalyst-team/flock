@@ -1,16 +1,15 @@
 id: moondream3
 display_name: Moondream 3 (tiny vision-language model — runs on a Raspberry Pi)
 source:
-  type: ollama
-  ollama_name: moondream:3
+  type: huggingface
+  repo: moondream/moondream3-preview
 size_bytes: 1200000000
-quant: q4_k_m
 context_window: 8192
 capabilities: [chat, vision]
-recommended_engines: [ollama, llamacpp]
+recommended_engines: [vllm, mlx]
 hardware:
   min_ram_gb: 4
-tags: [vision, tiny, edge, apache-2.0]
-license: apache-2.0
-license_url: https://huggingface.co/vikhyatk/moondream-3/blob/main/LICENSE
+tags: [vision, tiny, edge, bsl-1.1]
+license: bsl-1.1
+license_url: https://huggingface.co/moondream/moondream3-preview
 released: 2026-03-12

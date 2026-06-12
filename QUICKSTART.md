@@ -376,11 +376,11 @@ A summary table of the 37 catalog entries — see `flock model search` for the l
 |---|---|---|---|
 | `llama-3.2-1b` | smoke test | 2 GB | `ollama:llama3.2:1b` |
 | `llama-3.2-3b` ⭐ | small fast chat | 4 GB | `ollama:llama3.2:3b` |
-| `moondream3` | tiny vision-language (Raspberry Pi) | 4 GB | `ollama:moondream:3` |
+| `moondream3` | tiny vision-language (Raspberry Pi) | 4 GB | `hf: moondream/moondream3-preview` (vLLM/MLX) |
 | `qwen-coder-7b` | code completion + chat | 8 GB | `ollama:qwen2.5-coder:7b` |
-| `mimo-7b` | reasoning-focused 7B | 8 GB | `ollama:mimo:7b` |
-| `mimo-vl-7b` | small vision-language | 8 GB | `ollama:mimo-vl:7b` |
-| `mimo-audio` | speech + audio understanding | 8 GB | `ollama:mimo-audio:7b` |
+| `mimo-7b` | reasoning-focused 7B | 8 GB | `hf: XiaomiMiMo/MiMo-7B-RL` (vLLM/MLX) |
+| `mimo-vl-7b` | small vision-language | 8 GB | `hf: XiaomiMiMo/MiMo-VL-7B-RL` (vLLM/MLX) |
+| `mimo-audio` | speech + audio understanding | 8 GB | `hf: XiaomiMiMo/MiMo-Audio-7B-Instruct` (vLLM/MLX) |
 | `deepseek-r1-8b` | reasoning ("thinking") | 12 GB | `ollama:deepseek-r1:8b` |
 | `lfm2.5-8b-a1b` ⭐ | best on-device edge MoE | 8 GB | `ollama:lfm2.5:8b-a1b` |
 | `qwen3-8b` | general chat, balanced | 12 GB | `ollama:qwen3:8b` |
@@ -388,7 +388,7 @@ A summary table of the 37 catalog entries — see `flock model search` for the l
 | `gemma4-e2b` | mobile/edge multimodal (text+image+audio) | 8 GB | `ollama:gemma4:e2b` |
 | `gemma4-12b` | encoder-free multimodal | 12 GB | `ollama:gemma4:12b` |
 | `gemma4-e4b` | mobile/edge multimodal | 12 GB | `ollama:gemma4:e4b` |
-| `pixtral-12b` | Mistral vision-language | 16 GB | `ollama:pixtral:12b` |
+| `pixtral-12b` | Mistral vision-language | 16 GB | `hf: mistralai/Pixtral-12B-2409` (vLLM/MLX) |
 | `mellum2-12b` | JetBrains MoE coder (2.5B active) | 12 GB | `ollama:mellum2:12b` |
 | `mistral-nemo-12b` | 128K context chat | 12 GB | `ollama:mistral-nemo:12b` |
 | `qwen-coder-14b` | better code + agent | 16 GB | `ollama:qwen2.5-coder:14b` |

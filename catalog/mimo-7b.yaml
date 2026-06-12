@@ -1,13 +1,12 @@
 id: mimo-7b
 display_name: Xiaomi MiMo 7B (reasoning-focused; small dense)
 source:
-  type: ollama
-  ollama_name: mimo:7b
+  type: huggingface
+  repo: XiaomiMiMo/MiMo-7B-RL
 size_bytes: 4500000000
-quant: q4_k_m
 context_window: 32768
 capabilities: [chat, tools]
-recommended_engines: [ollama, vllm, llamacpp]
+recommended_engines: [vllm, mlx]
 hardware:
   min_ram_gb: 8
 tags: [reasoning, small, xiaomi, apache-2.0]
