@@ -1279,6 +1279,8 @@ All admin endpoints require an admin key (`flock token create --admin`).
 | `gpt-…`, `o3`, `o4` | OpenAI API (proxied) |
 | `hf:…` | local, if the model is loaded |
 
+**Routing-sort suffixes** (OpenRouter-compatible): append `:floor` (cheapest first) or `:nitro` (highest tokens/sec first) to any local model id — `qwen3.6-27b:floor` walks that model's candidate chain ordered by price instead of catalog preference. Equivalent explicit forms: `flock.sort: "price" | "latency" | "throughput"` in the body or `X-Flock-Sort` header (explicit wins over the suffix). The suffix is stripped before the engine, usage records, and per-key allowlists see the name — an allowlist of `["x"]` authorizes `x:floor`. Price comes from the catalog + vendor pricing table (free local models always beat paid egress); latency/throughput come from each model's rolling p95 / median tokens-per-second over recent requests, so rankings warm up with traffic. Audit-logged like every routing override.
+
 ---
 
 ## CLI reference

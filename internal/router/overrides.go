@@ -37,6 +37,14 @@ type Overrides struct {
 	// toggle, not a count. Hedging skips the retry/fallback path —
 	// the operator has already paid the N× cost.
 	Hedge bool
+
+	// Sort reorders the candidate chain by a metric instead of walking
+	// it in catalog-preference order: "price" (cheapest first — free
+	// local models beat vendor egress), "latency" (lowest rolling p95
+	// first), or "throughput" (highest tokens/sec first). Set from
+	// `flock.sort` / X-Flock-Sort, or via the `:floor` (price) and
+	// `:nitro` (throughput) model-name suffixes. Empty = unset.
+	Sort string
 }
 
 // MaxRetries is the upper bound the parsers enforce on
@@ -52,7 +60,7 @@ const RetryBackoffCapMS = 5000
 // reflecting and lets callers short-circuit the override path entirely
 // for the (vast) majority of requests that don't customize routing.
 func (o Overrides) IsSet() bool {
-	return len(o.Fallbacks) > 0 || o.NumRetries > 0 || o.Hedge
+	return len(o.Fallbacks) > 0 || o.NumRetries > 0 || o.Hedge || o.Sort != ""
 }
 
 // ctxKey is unexported to avoid context-key collisions.
@@ -86,6 +94,11 @@ func (o Overrides) Clamp() Overrides {
 	}
 	if o.RetryBackoffMS > RetryBackoffCapMS {
 		o.RetryBackoffMS = RetryBackoffCapMS
+	}
+	switch o.Sort {
+	case "", SortPrice, SortLatency, SortThroughput:
+	default:
+		o.Sort = "" // unknown mode — ignore rather than 400 (forward compat)
 	}
 	return o
 }

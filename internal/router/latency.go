@@ -60,21 +60,26 @@ func (r *ringBuf) snapshot() []time.Duration {
 }
 
 // latencyStats is a per-model rolling window of observations. Backed by
-// one ring per model so push is O(1) regardless of window size.
+// one ring per model so push is O(1) regardless of window size. A
+// parallel ring tracks tokens/sec for `sort: throughput`.
 type latencyStats struct {
 	mu      sync.RWMutex
 	cfg     LatencyConfig
 	samples map[string]*ringBuf
+	tps     map[string]*ringBuf // tokens/sec, stored as time.Duration(tps*1000) for ring reuse
 }
 
 func newLatencyStats(cfg LatencyConfig) *latencyStats {
 	if cfg.Window <= 0 {
 		cfg.Window = 50
 	}
-	return &latencyStats{cfg: cfg, samples: map[string]*ringBuf{}}
+	return &latencyStats{cfg: cfg, samples: map[string]*ringBuf{}, tps: map[string]*ringBuf{}}
 }
 
-func (s *latencyStats) record(model string, d time.Duration) {
+// record adds one completed-request observation. tokens is the
+// completion-token count (0 when unknown — e.g. embeddings — which
+// records latency only).
+func (s *latencyStats) record(model string, d time.Duration, tokens int) {
 	if model == "" || d <= 0 {
 		return
 	}
@@ -86,6 +91,32 @@ func (s *latencyStats) record(model string, d time.Duration) {
 		s.samples[model] = rb
 	}
 	rb.push(d)
+	if tokens > 0 {
+		tb, ok := s.tps[model]
+		if !ok {
+			tb = newRingBuf(s.cfg.Window)
+			s.tps[model] = tb
+		}
+		// Milli-tokens/sec as a Duration so the existing ring type works.
+		tb.push(time.Duration(float64(tokens) / d.Seconds() * 1000))
+	}
+}
+
+// throughput returns the median tokens/sec over the rolling window, or
+// 0 with fewer than 5 samples (too small to be meaningful).
+func (s *latencyStats) throughput(model string) float64 {
+	s.mu.RLock()
+	tb := s.tps[model]
+	s.mu.RUnlock()
+	if tb == nil {
+		return 0
+	}
+	xs := tb.snapshot()
+	if len(xs) < 5 {
+		return 0
+	}
+	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	return float64(xs[len(xs)/2]) / 1000
 }
 
 // p95 returns the 95th percentile of the rolling window. Returns 0 if

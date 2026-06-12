@@ -107,8 +107,13 @@ type Router struct {
 	// is non-zero) preempts a slow primary by trying a faster fallback
 	// first. Always non-nil after New(); the threshold defaults to 0
 	// (disabled — latencies are still recorded for traces / future
-	// metrics, but no reordering).
+	// metrics, but no reordering). Also feeds `sort: latency|throughput`.
 	latency *latencyStats
+
+	// priceFn resolves a model id to its combined $/1K-token rate for
+	// `sort: price` / `:floor`. nil disables price sorting (chain is
+	// left in catalog order). Set via SetPriceResolver.
+	priceFn func(modelID string) float64
 
 	// Placement cooldown ("penalty box"): a worker node that errors
 	// `placementAllowedFails` times in a row is parked for
@@ -357,7 +362,13 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 
 	ov := FromContext(ctx)
 	chain, source, chains := r.chainFor(req.Model, ov)
-	if source == "catalog" {
+	switch {
+	case ov.Sort != "":
+		// Explicit per-request sort wins over the latency-pressure
+		// reorder — the client asked for a specific metric.
+		chain = r.sortChain(chain, ov.Sort)
+		span.SetAttributes(attribute.String("flock.sort", ov.Sort))
+	case source == "catalog":
 		if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
 			chain = reordered
 			span.SetAttributes(
@@ -446,7 +457,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 					span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 				}
 				span.SetAttributes(attribute.String("flock.model.served", candidate))
-				r.latency.record(candidate, time.Since(attemptStart))
+				r.latency.record(candidate, time.Since(attemptStart), 0)
 				return res, nil
 			}
 			lastErr = err
@@ -786,9 +797,18 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 
 	ov := FromContext(ctx)
 	chain, source, chains := r.chainFor(req.Model, ov)
-	// Latency-aware reorder applies only to the catalog chain — per-request
-	// overrides are operator intent and shouldn't be silently rearranged.
-	if source == "catalog" {
+	switch {
+	case ov.Sort != "":
+		// Explicit per-request sort (`flock.sort` / `:floor` / `:nitro`)
+		// wins over the latency-pressure reorder. Applies to per-request
+		// chains too — sorting an explicit fallback list is still the
+		// client's stated intent.
+		chain = r.sortChain(chain, ov.Sort)
+		span.SetAttributes(attribute.String("flock.sort", ov.Sort))
+	case source == "catalog":
+		// Latency-aware reorder applies only to the catalog chain —
+		// per-request overrides are operator intent and shouldn't be
+		// silently rearranged.
 		if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
 			chain = reordered
 			span.SetAttributes(
@@ -909,10 +929,13 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			defer r.decInflight(nodeID, servedModel)
 			defer close(out)
 			defer span.End() // duration covers full streamed response
-			var tokenCount int
+			var tokenCount, completionTokens int
 			for ev := range inner {
 				if ev.Delta != "" {
 					tokenCount++
+				}
+				if ev.Usage != nil {
+					completionTokens = ev.Usage.CompletionTokens
 				}
 				select {
 				case out <- ev:
@@ -925,9 +948,14 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			}
 			span.SetAttributes(attribute.Int("flock.stream.events", tokenCount))
 			span.SetStatus(codes.Ok, "")
-			// Latency sample for this model = full attempt-to-done duration.
-			// Feeds into reorderByLatency on the next request for this model.
-			r.latency.record(servedModel, time.Since(attemptStart))
+			// Latency + throughput sample for this model = full attempt-to-
+			// done duration. Feeds reorderByLatency and `sort: throughput`.
+			// Engine-reported completion tokens preferred; delta-event count
+			// is the fallback proxy when the engine omits usage.
+			if completionTokens == 0 {
+				completionTokens = tokenCount
+			}
+			r.latency.record(servedModel, time.Since(attemptStart), completionTokens)
 		}()
 		return out, nil
 	}

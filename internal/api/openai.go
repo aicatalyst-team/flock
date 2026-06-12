@@ -86,7 +86,12 @@ type flockExtras struct {
 	NumRetries     int      `json:"num_retries,omitempty"`
 	RetryBackoffMS int      `json:"retry_backoff_ms,omitempty"`
 	Hedge          bool     `json:"hedge,omitempty"`
-	Cache          *struct {
+	// Sort reorders the candidate chain by a metric: price | latency |
+	// throughput. The `:floor` / `:nitro` model-name suffixes are
+	// shortcuts for price / throughput; this explicit field wins over
+	// a suffix when both are present.
+	Sort  string `json:"sort,omitempty"`
+	Cache *struct {
 		Namespace string `json:"namespace,omitempty"`
 	} `json:"cache,omitempty"`
 }
@@ -176,7 +181,10 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requested := req.Model
+	// Strip an OpenRouter-style `:floor` / `:nitro` routing suffix before
+	// model resolution — it's a routing hint, not part of the model id.
+	// Usage records and the response `model` field carry the base id.
+	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" || requested == "auto" {
 		requested = h.Default
 	}
@@ -197,9 +205,10 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-request routing overrides (flock.fallbacks / flock.num_retries /
-	// flock.retry_backoff_ms in the body or X-Flock-* headers) attach to
-	// the context the router reads.
-	ctx := overridesContext(r, req.Flock, h.Store, requested)
+	// flock.retry_backoff_ms / flock.sort in the body or X-Flock-*
+	// headers, plus any :floor/:nitro suffix) attach to the context the
+	// router reads.
+	ctx := overridesContext(r, req.Flock, h.Store, requested, sortHint)
 
 	start := time.Now()
 	stream, err := h.Engine.Chat(ctx, engineReq)

@@ -12,6 +12,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/cache"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/metrics"
+	"github.com/hadihonarvar/flock/internal/models"
 )
 
 // ---- /v1/embeddings ----
@@ -112,7 +113,9 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requested := req.Model
+	// Routing suffixes work here too (`nomic-embed-text:floor`), though
+	// embedding chains are short — strip so the engine sees the base id.
+	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "model is required")
 		return
@@ -123,8 +126,9 @@ func (h *Handler) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := overridesContext(r, nil, h.Store, requested, sortHint)
 	start := time.Now()
-	res, err := ee.Embed(r.Context(), engines.EmbedRequest{
+	res, err := ee.Embed(ctx, engines.EmbedRequest{
 		Model:  resolved,
 		Inputs: inputs,
 	})

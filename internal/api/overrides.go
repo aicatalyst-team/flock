@@ -23,9 +23,15 @@ import (
 // audit row when the request actually carried overrides (so admins can
 // see who's bypassing the catalog policy).
 //
+// sortHint is the sort mode parsed from a `:floor`/`:nitro` model-name
+// suffix — lowest precedence (body field, then header, then suffix).
 // st may be nil — the audit step is best-effort.
-func overridesContext(r *http.Request, body *flockExtras, st store.Store, requestedModel string) context.Context {
-	o := mergeBodyAndHeaders(body, r.Header).Clamp()
+func overridesContext(r *http.Request, body *flockExtras, st store.Store, requestedModel, sortHint string) context.Context {
+	o := mergeBodyAndHeaders(body, r.Header)
+	if o.Sort == "" {
+		o.Sort = sortHint
+	}
+	o = o.Clamp()
 	if !o.IsSet() {
 		return r.Context()
 	}
@@ -36,8 +42,8 @@ func overridesContext(r *http.Request, body *flockExtras, st store.Store, reques
 // overridesContextAnthropic mirrors overridesContext but for the
 // Anthropic handler, whose body shape carries the same fields under the
 // same `flock` key.
-func overridesContextAnthropic(r *http.Request, body *flockExtras, st store.Store, requestedModel string) context.Context {
-	return overridesContext(r, body, st, requestedModel)
+func overridesContextAnthropic(r *http.Request, body *flockExtras, st store.Store, requestedModel, sortHint string) context.Context {
+	return overridesContext(r, body, st, requestedModel, sortHint)
 }
 
 func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
@@ -47,6 +53,7 @@ func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
 		o.NumRetries = body.NumRetries
 		o.RetryBackoffMS = body.RetryBackoffMS
 		o.Hedge = body.Hedge
+		o.Sort = body.Sort
 	}
 	// Headers fill in only when the body left a field zero. Body wins so
 	// a client can be explicit about overriding a proxy-injected header.
@@ -73,6 +80,9 @@ func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
 		if v := h.Get("X-Flock-Hedge"); v == "1" || v == "true" {
 			o.Hedge = true
 		}
+	}
+	if o.Sort == "" {
+		o.Sort = h.Get("X-Flock-Sort")
 	}
 	return o
 }
@@ -127,6 +137,9 @@ func overrideAuditMeta(keyID string, o router.Overrides) string {
 	if o.RetryBackoffMS > 0 {
 		parts = append(parts, kv("retry_backoff_ms", strconv.Itoa(o.RetryBackoffMS)))
 	}
+	if o.Sort != "" {
+		parts = append(parts, kv("sort", o.Sort))
+	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
@@ -150,6 +163,9 @@ func overrideAuditMetaWithReq(ctx context.Context, keyID string, o router.Overri
 	}
 	if o.RetryBackoffMS > 0 {
 		parts = append(parts, kv("retry_backoff_ms", strconv.Itoa(o.RetryBackoffMS)))
+	}
+	if o.Sort != "" {
+		parts = append(parts, kv("sort", o.Sort))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }

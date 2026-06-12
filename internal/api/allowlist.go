@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
@@ -60,6 +61,9 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			// A `:floor`/`:nitro` routing suffix is not part of the model
+			// identity — an allowlist of ["x"] authorizes "x:floor".
+			model, _ = models.SplitSortSuffix(model)
 			if !ModelAllowed(key.AllowedModels, model) {
 				auditRefusal(r.Context(), st, key, model)
 				writeModelNotAllowed(w, model, key.AllowedModels)

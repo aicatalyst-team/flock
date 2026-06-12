@@ -8,7 +8,7 @@ import (
 func TestLatencyStats_P95InsufficientSamples(t *testing.T) {
 	s := newLatencyStats(LatencyConfig{P95Threshold: time.Second})
 	for i := 0; i < 4; i++ {
-		s.record("m1", 10*time.Second)
+		s.record("m1", 10*time.Second, 0)
 	}
 	if got := s.p95("m1"); got != 0 {
 		t.Errorf("p95 with 4 samples should be 0 (need ≥5); got %v", got)
@@ -24,9 +24,9 @@ func TestLatencyStats_P95Computation(t *testing.T) {
 	// flags "the slowest 5% are this slow or worse," and with 20
 	// samples that's the 19th value.
 	for i := 0; i < 19; i++ {
-		s.record("m1", time.Millisecond)
+		s.record("m1", time.Millisecond, 0)
 	}
-	s.record("m1", 100*time.Millisecond)
+	s.record("m1", 100*time.Millisecond, 0)
 	if got := s.p95("m1"); got != time.Millisecond {
 		t.Errorf("p95 of 19×1ms + 1×100ms = %v, want 1ms (the 19th-smallest)", got)
 	}
@@ -35,10 +35,10 @@ func TestLatencyStats_P95Computation(t *testing.T) {
 	// the outlier band.
 	s2 := newLatencyStats(LatencyConfig{})
 	for i := 0; i < 95; i++ {
-		s2.record("m2", time.Millisecond)
+		s2.record("m2", time.Millisecond, 0)
 	}
 	for i := 0; i < 5; i++ {
-		s2.record("m2", 100*time.Millisecond)
+		s2.record("m2", 100*time.Millisecond, 0)
 	}
 	if got := s2.p95("m2"); got != 100*time.Millisecond {
 		t.Errorf("p95 of 95×1ms + 5×100ms = %v, want 100ms", got)
@@ -48,7 +48,7 @@ func TestLatencyStats_P95Computation(t *testing.T) {
 func TestLatencyStats_ReorderDisabledWhenThresholdZero(t *testing.T) {
 	s := newLatencyStats(LatencyConfig{}) // P95Threshold = 0 → disabled
 	for i := 0; i < 10; i++ {
-		s.record("slow", 10*time.Second)
+		s.record("slow", 10*time.Second, 0)
 	}
 	chain := []string{"slow", "fast"}
 	reordered, swapped := s.reorderByLatency(chain)
@@ -64,11 +64,11 @@ func TestLatencyStats_ReorderWhenPrimarySlow(t *testing.T) {
 	s := newLatencyStats(LatencyConfig{P95Threshold: 2 * time.Second})
 	// Primary "slow" has p95 = 10s (above threshold)
 	for i := 0; i < 10; i++ {
-		s.record("slow", 10*time.Second)
+		s.record("slow", 10*time.Second, 0)
 	}
 	// Fallback "fast" has p95 = 50ms (below threshold)
 	for i := 0; i < 10; i++ {
-		s.record("fast", 50*time.Millisecond)
+		s.record("fast", 50*time.Millisecond, 0)
 	}
 	chain := []string{"slow", "fast"}
 	reordered, swapped := s.reorderByLatency(chain)
@@ -88,7 +88,7 @@ func TestLatencyStats_NoReorderWhenFallbackUnseen(t *testing.T) {
 	// so the chain stays as-is.
 	s := newLatencyStats(LatencyConfig{P95Threshold: time.Second})
 	for i := 0; i < 10; i++ {
-		s.record("slow", 5*time.Second)
+		s.record("slow", 5*time.Second, 0)
 	}
 	chain := []string{"slow", "untested"}
 	_, swapped := s.reorderByLatency(chain)
@@ -100,7 +100,7 @@ func TestLatencyStats_NoReorderWhenFallbackUnseen(t *testing.T) {
 func TestLatencyStats_RingBufferBounded(t *testing.T) {
 	s := newLatencyStats(LatencyConfig{Window: 3, P95Threshold: time.Second})
 	for i := 0; i < 100; i++ {
-		s.record("m1", time.Duration(i)*time.Millisecond)
+		s.record("m1", time.Duration(i)*time.Millisecond, 0)
 	}
 	s.mu.RLock()
 	rb := s.samples["m1"]

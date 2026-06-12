@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/models"
 )
 
 // AnthropicHandler holds dependencies for the Anthropic-compatible routes.
@@ -122,7 +123,9 @@ func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 		req.MaxTokens = 4096
 	}
 
-	requested := req.Model
+	// Strip an OpenRouter-style `:floor` / `:nitro` routing suffix before
+	// model resolution — it's a routing hint, not part of the model id.
+	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" {
 		requested = h.Default
 	}
@@ -146,8 +149,9 @@ func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 		Stream:      true,
 	}
 
-	// Per-request overrides (flock.* body block or X-Flock-* headers).
-	ctx := overridesContextAnthropic(r, req.Flock, h.Store, requested)
+	// Per-request overrides (flock.* body block, X-Flock-* headers, or a
+	// :floor/:nitro model suffix).
+	ctx := overridesContextAnthropic(r, req.Flock, h.Store, requested, sortHint)
 
 	start := time.Now()
 	stream, err := h.Engine.Chat(ctx, engineReq)

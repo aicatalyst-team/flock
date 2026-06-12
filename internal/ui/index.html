@@ -842,7 +842,7 @@ async function renderPlayground() {
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
           <div>
             <label class="text-xs text-slate-500">Model</label>
-            <select id="pgModel" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">${options || "<option>auto</option>"}</select>
+            <select id="pgModel" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" title="Tip: in API requests you can append :floor (cheapest) or :nitro (fastest) to any model id — OpenRouter-style routing-sort shortcuts">${options || "<option>auto</option>"}</select>
           </div>
           <div>
             <label class="text-xs text-slate-500">Max tokens</label>
