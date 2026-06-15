@@ -1,0 +1,14 @@
+.git
+*.md
+LICENSE
+kubernetes/
+poc-plan.md
+.autopoc/
+dashboards/
+docs/
+site/
+scripts/
+installer/
+.github/
+.goreleaser.yaml
+.golangci.yml
