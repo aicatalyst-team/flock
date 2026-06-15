@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flock
+  namespace: poc-flock
+  labels:
+    app: flock
+    autopoc.io/project: flock
+spec:
+  type: ClusterIP
+  selector:
+    app: flock
+  ports:
+    - port: 8080
+      targetPort: 8080

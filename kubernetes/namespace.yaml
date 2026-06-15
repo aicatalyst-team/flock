@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: poc-flock
+  labels:
+    app.kubernetes.io/name: flock
+    app.kubernetes.io/managed-by: autopoc

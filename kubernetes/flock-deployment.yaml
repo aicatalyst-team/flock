@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flock
+  namespace: poc-flock
+  labels:
+    app: flock
+    autopoc.io/project: flock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flock
+  template:
+    metadata:
+      labels:
+        app: flock
+    spec:
+      containers:
+        - name: flock
+          image: quay.io/aicatalyst/flock-flock:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FLOCK_LISTEN
+              value: ":8080"
+            - name: FLOCK_DATA_DIR
+              value: "/opt/app-root/data"
+          volumeMounts:
+            - name: flock-data
+              mountPath: /opt/app-root/data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: flock-data
+          persistentVolumeClaim:
+            claimName: flock-data
